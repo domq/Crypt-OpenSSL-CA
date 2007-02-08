@@ -1,0 +1,1499 @@
+#!perl -wT
+# Copyright Dominique Quatravaux 2006 - Licensed under the same terms as Perl itself
+
+=head1 NAME
+
+My::Module::Build - Helper for releasing my (DOMQ's) code to CPAN
+
+=head1 SYNOPSIS
+
+This module works mostly like L<Module::Build> with a few differences
+highlighted below. Put this in Build.PL:
+
+=for My::Tests::Below "synopsis" begin
+
+  use strict;
+  use warnings;
+
+  ## Replace
+  # use Module::Build;
+  ## with
+  use FindBin; use lib "$FindBin::Bin/inc";
+  use My::Module::Build;
+
+  ## Replace
+  # my $builder = Module::Build->new(
+  ## With
+  my $builder = My::Module::Build->new(
+     ## ... Use ordinary Module::Build arguments here ...
+     build_requires =>    {
+           'Acme::Pony'    => 0,
+           My::Module::Build->requires_for_tests(),
+     },
+  );
+
+  ## The remainder of the script is unchanged
+
+=for My::Tests::Below "synopsis" end
+
+
+=head1 DESCRIPTION
+
+DOMQ is a guy who releases CPAN packages from time to time - you are
+probably frobbing into one of them right now.
+
+This module is a subclass to L<Module::Build> by Ken Williams, and a
+helper that supports DOMQ's coding style for Perl modules so as to
+facilitate relasing my code to the world.
+
+=head2 How to use My::Module::Build for a new CPAN package
+
+This part of the documentation is probably only useful to myself,
+but hey, you never know - Feel free to share and enjoy!
+
+=over
+
+=item 1.
+
+If not already done, prepare a skeletal CPAN module that uses
+L<Module::Build> as its build support class. L<Module::Starter> and
+its companion command C<module-starter(1)> is B<highly> recommended
+for this purpose, e.g.
+
+   module-starter --mb --module=Main::Screen::Turn::On \
+     --author='Dominique Quatravaux' --email='dom@idealx.com' --force
+
+=item 2.
+
+create an inc/ subdirectory at the CPAN module's top level and drop
+this file there. (While you are there, you could put the rest of the
+My:: stuff along with it, and the t/maintainer/ test cases - see L<SEE
+ALSO>.)
+
+=item 3.
+
+Amend the Build.PL as highlighted in the L</SYNOPSIS>.
+
+=item 4.
+
+B<VERY IMPORTANT!> Arrange for My::Module::Build and friends to
+B<not> be indexed on the CPAN, lest the Perl deities' wrath fall upon
+you. This is done by adding the following lines to the META.yml file:
+
+=for My::Tests::Below "META.yml excerpt" begin
+
+ no_index:
+   directory:
+     - example
+     - inc
+     - t
+
+=for My::Tests::Below "META.yml excerpt" end
+
+(indentation is meaningful - "no_index:" must start at the very first
+column and the indenting quantum is exactly 2 spaces, B<no tabs
+allowed>)
+
+If you have arranged for the META.yml file to be built automatically
+(e.g. using an external Makefile for grouped CPAN packaging), do a
+
+=for My::Tests::Below "distmeta" begin
+
+   ./Build manifest
+   ./Build distmeta
+
+=for My::Tests::Below "distmeta" end
+
+and this will be done automatically (but B<please double-check
+nevertheless>).
+
+=back
+
+=head2 Coding style supported by this module
+
+No, I don't want to go into silly regulations regarding whether I
+should start a new line before the opening bracket in a sub
+declaration. This would be coding syntax, or coding grammar. The stuff
+here is about style, and only the subset thereof that is somehow under
+control of the CPAN build process.
+
+=head3 Unit tests
+
+A large fraction of the unit tests are written as perlmodlib-style
+__END__ documents attached directly to the module to test. See
+L<My::Tests::Below> for details. My::Module::Build removes the test
+footer at build time so as not to waste any resources on the install
+target platform.
+
+=cut
+
+package My::Module::Build;
+use strict;
+use warnings;
+use base "Module::Build";
+
+use IO::File;
+use File::Path;
+use File::Spec;
+use File::Find;
+use File::Slurp;
+
+=head1 INTERNAL DOCUMENTATION
+
+This section describes how My::Module::Build works internally. It
+should be useful only to people who intend to modify it.
+
+=head2 Global variables
+
+=over
+
+=item I<$running_under_emacs_debugger>
+
+Set by L</massage_ARGV> if (you guessed it) we are currently running
+under the Emacs debugger.
+
+=cut
+
+our $running_under_emacs_debugger;
+
+=back
+
+=head2 Constants
+
+=over
+
+=item is_win32
+
+Your usual bugware-enabling OS checks.
+
+=cut
+
+use constant is_win32 => scalar($^O =~ /^(MS)?Win32$/);
+
+=back
+
+=head2 Constructor and class methods
+
+=over
+
+=item I<new()>
+
+Overloaded from parent class in order to call
+L</check_maintainer_dependencies> if L</maintainer_mode_enabled> is
+true.  Also sets the C<recursive_test_files> property to true by
+default (see L<Module::Build/test_files>), since I like to store
+maintainer-only tests in C<t/maintainer> (as documented in
+L</find_test_files>).
+
+=cut
+
+sub new {
+    my ($class, %opts) = @_;
+    $opts{recursive_test_files} = 1 if
+        (! defined $opts{recursive_test_files});
+    my $self = $class->SUPER::new(%opts);
+    if ($self->maintainer_mode_enabled()) {
+        print "Running specific maintainer checks...\n";
+        $self->check_maintainer_dependencies();
+    }
+    $self->_process_options;
+    $self;
+}
+
+=item I<requires_for_tests()>
+
+Returns a list of packages that are required for my custom style of
+L</Unit tests>, that should therefore be appended to the
+C<build_requires> hash as shown in L</SYNOPSIS>.
+
+=cut
+
+sub requires_for_tests {
+       ('Test::More' => 0,
+        'Test::Group' => 0,
+        'File::Temp' => 0,  # for tempdir() in My::Tests::Below
+        'File::Slurp' => 0, # a common occurence in my tests
+        'Fatal' => 0, # Used to cause tests to die early if fixturing
+                      # fails, see sample in this module's test suite
+                      # (at the bottom of this file)
+        'IO::Pipe' => 0, # Used to run commands and test their STDOUT
+                         # w/o breaking taint safety
+        'FindBin' => 0, # Used by the test suite to create a
+                        # test package atop My::Module::Build
+       );
+}
+
+=back
+
+=head2 Methods that can be called from inside Build.PL
+
+=over
+
+=item I<maintainer_mode_enabled()>
+
+Returns true iff we are running "./Build.PL" or "./Build" off a
+revision control system of some kind. Returns false in all other
+situations, especially if we are running on an untarred package
+downloaded from CPAN.
+
+=cut
+
+sub maintainer_mode_enabled {
+    my $self = shift;
+    return 1 if -d File::Spec->catdir($self->base_dir, ".svn");
+    my $svkcmd = sprintf("svk info '%s' 2>%s",
+                         File::Spec->catdir($self->base_dir, "Build.PL"),
+                         File::Spec->devnull);
+    `$svkcmd`; return 1 if ! $?;
+    return 0;
+}
+
+=item I<check_maintainer_dependencies()>
+
+Checks that the modules required for B<modifying> the CPAN package are
+installed on the target system, and displays a friendly, non-fatal
+message otherwise. This method is automatically run from L</new> if
+appropriate (that is, if L</maintainer_mode_enabled> is true).
+
+=cut
+
+sub check_maintainer_dependencies {
+    my $self = shift;
+    unless ($self->check_installed_status('YAML', 0)->{ok})
+        { $self->show_warning(<<"MESSAGE"); }
+
+The YAML module from CPAN is missing on your system.
+
+YAML is required for the "./Build distmeta" operation. You have to run
+that command to regenerate META.yml every time you add a new .pm,
+change dependencies or otherwise alter the namespace footprint of this
+CPAN package. You will therefore only be able to contribute small
+bugfixes until you install YAML.
+
+MESSAGE
+    foreach my $testmod (qw(Test::NoBreakpoints
+                            Test::Pod Test::Pod::Coverage)) {
+        unless ($self->check_installed_status($testmod, 0)->{ok})
+            { $self->show_warning(<<"MESSAGE")};
+
+The $testmod module from CPAN is missing on your system.
+
+One of the tests in t/maintainer will fail because of that.  Please
+install the corresponding module to run the full test suite.
+
+MESSAGE
+    }
+}
+
+=item I<show_warning($message)>
+
+Displays a multi-line message $message to the user, and prompts
+him/her to "Press RETURN to continue".
+
+=cut
+
+sub show_warning {
+    my ($self, $message) = @_;
+    $message = "\n$message" until ($message =~ m/^\n\n/);
+    $message .= "\n" until ($message =~ m/\n\n$/);
+    warn $message;
+    $self->prompt("Press RETURN to continue");
+    1;
+}
+
+=item I<show_fatal_error($message)>
+
+Like L</show_warning>, but throws an exception after displaying
+$message.
+
+=cut
+
+sub show_fatal_error {
+    my ($self, $message) = @_;
+    $self->show_warning($message);
+    die "Fatal error, bailing out.\n";
+}
+
+=back
+
+=head3 Dependent option graph
+
+This API is a wrapper around L<Module::Build/prompt>,
+L<Module::Build/get_options> and L<Module::Build/notes> to streamline
+the programming of optional features into a ./Build.PL script. Here is
+a short synopsis for this feature:
+
+=for My::Tests::Below "option-graph" begin
+
+   my $class = My::Module::Build->subclass(code => <<'CODE');
+
+   sub install_everything: Config_Option {
+       question => "Install everything",
+       default => 1;
+   }
+
+   sub install_module_foo: Config_Option(type="boolean") {
+       my $build = shift;
+       return (default => 1) # Don't even bother asking the question
+          if $build->option_value("install_everything");
+       question => "Install module foo",
+       default => 0;
+   }
+
+   CODE
+
+   my $builder = $class->new(...) # See SYNOPSIS
+
+=for My::Tests::Below "option-graph" end
+
+Options can then be fed from the command line (e.g. C<< ./Build.PL
+--gender=f >>) or by answering the questions interactively on the
+terminal. I<My::Module::Build> will ask the questions at L</new>
+time, in the correct order if they depend on each other (as shown in
+the example), detect circular dependencies, and die if a mandatory
+question does not get an appropriate answer.
+
+=head4 Syntax for the option declarations
+
+As shown above, options are methods in a subclass to
+I<My::Module::Build> with a subroutine attribute of the form C<<
+Config_Option(key1=value1, ...) >>. Right now the
+following keys are defined:
+
+=over
+
+=item        I<type>
+
+The datatype of this option, either as a word (e.g. "boolean", "integer" or
+"string") or as a L<GetOpt::Long> qualifier (e.g. "!", "=s" or "=i").
+
+The default is to guess from the name of the option: "install_foo" and
+"enable_bar" are supposed to be booleans, "baz_port" an integer, and
+everything else a string.
+
+=back
+
+The name of the method is the internal key for the corresponding
+option (e.g. for L</option_value>). It is also the name of the
+corresponding command-line switch, except that all underscores are
+converted to dashes.
+
+The method shall return a (key, value) "flat hash" with the following
+keys recognized:
+
+=over
+
+=item        I<question>
+
+The question to ask, as text. A question mark is appended
+automatically for convenience if there isn't already one. If no
+question is set, I<My::Module::Build> will not ask anything for this
+question even in interactive mode, and will attempt to use the default
+value instead (see below).
+
+=item        I<default>
+
+In batch mode, the value to use if none is available from the command
+line or the persisted answer set from previous attempts to run
+./Build.PL. In interactive mode, the value to offer to the user as the
+default.
+
+=item       I<mandatory>
+
+A Boolean indicating whether answering the question with a non-empty
+value is mandatory (see also L</prompt> for a twist on what
+"non-empty" exactly means). The default mandatoryness is 1 if
+I<default> is not returned, 0 if I<default> is returned (even with an
+undef value).
+
+=back
+
+=cut
+
+# These "use" statements are specific to the dependent option graph
+# to facilitate refactoring.
+use Getopt::Long;
+use Carp;
+use overload; # for overload::StrVal
+
+=head4 Public methods for the dependent option graph
+
+=over
+
+=item I<option_value($optionname)>
+
+Returns the value selected for the option $optionname. From within an
+option declaration sub, this call may result in the question for
+$optionname (and its own dependencies, recursively) being asked on
+the terminal at once. If a loop is detected so doing,
+I<option_value()> will die with a messsage that starts with the word
+"RECURSION".
+
+Answers to questions are persisted using Module::Build's I<< ->notes
+>> mechanism: outside the option declaration subs,
+I<option_value($optionname)> is therefore an alias for
+I<notes("option:$optionname")>.
+
+=cut
+
+sub option_value {
+	my ($self, $key) = @_;
+
+    my $noteskey = "option:$key";
+    my $cached = $self->notes($noteskey);
+    return $cached if defined $cached;
+    my $answer = $self->_option_value_nocache($key);
+    $self->notes($noteskey, $answer);
+    return $answer;
+}
+
+=back
+
+=head4 Private methods for the dependent option graph
+
+=over
+
+=item I<_option_value_nocache($key)>
+
+The workhorse behind L</option_value>, which is just a caching wrapper.
+
+=cut
+
+sub _option_value_nocache {
+    my ($self, $key) = @_;
+
+    # return $self->_option_default_value($key) if
+    #         ($self->_option_phase($key) ne $self->{phase});
+
+    do { # Look at command line
+        my $keyopt = lc($key); $keyopt =~ s/_/-/g;
+
+        my %type2getopt = ("string" => "=s", "integer" => "=i",
+                           "boolean" => "!");
+        my $getopt = new Getopt::Long::Parser(config => [qw(pass_through)]);
+        my $type = $self->_option_type($key);
+        my $retval;
+        $getopt->getoptions($keyopt . $type2getopt{$type} => \$retval)
+        or die "Bad value for --$keyopt command-line option".
+            " (expected $type)\n";
+        if (defined $retval) {
+            $self->_option_check_value($key, \$retval);
+            return $retval;
+        }
+    };
+
+    my $default = $self->_option_default_value($key);
+
+    if (defined(my $question = $self->_option_question($key))) { # Ask user
+        if ($self->_option_type($key) eq "boolean") {
+            $default = $default ? "yes" : "no";
+        }
+
+        ASK_AGAIN: {
+            my $answer = $self->prompt($question, $default);
+            my $problem = $self->_option_check_value($key, \$answer);
+            return $answer if (! $problem);
+
+            if (-t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT))) {
+                warn $problem;
+                redo ASK_AGAIN;
+            } else {
+                die $problem;
+            }
+        }
+    };
+    return $default;
+}
+
+
+=item I<subclass(%named_arguments)>
+
+Overloaded from L<Module::Build::Base> to set @ISA at compile time and
+to the correct value in the sub-classes generated from the C<< code >>
+named argument. We need @ISA to be set up at compile-time so that the
+method attributes work correctly; also we work around a bug present in
+Module::Build 0.26 and already fixed in the development branch whence,
+ironically, ->subclass does not work from a subclass.
+
+=cut
+
+sub subclass {
+    my ($pack, %opts) = @_;
+
+    $opts{code} = <<"KLUDGE_ME_UP" if defined $opts{code};
+# Kludge inserted by My::Module::Build to work around some brokenness
+# in the \@ISA setup code above:
+use base "My::Module::Build";
+our \@ISA;
+BEGIN { our \@ISAorig = \@ISA; }
+\@ISA = our \@ISAorig;
+
+$opts{code}
+KLUDGE_ME_UP
+
+    return $pack->SUPER::subclass(%opts);
+}
+
+=item I<MODIFY_CODE_ATTRIBUTES($package, $coderef, @attrs)>
+
+Automatically invoked by Perl when parsing subroutine attributes (see
+L</attributes>); parses and stores the C<Config_Option> attributes
+described in L</Syntax for the option declarations>.
+
+=cut
+
+our %declared_options; our %option_type;
+sub MODIFY_CODE_ATTRIBUTES {
+    my ($package, $coderef, @attrs) = @_;
+    $coderef = overload::StrVal($coderef);
+    my @retval;
+    ATTRIBUTE: foreach my $attr (@attrs) {
+        unless ($attr =~ m/^\s*Config_Option\s*(?:|\(([^()]*)\))\s*$/) {
+            push @retval, $attr; # Pass to downstream handlers
+            next ATTRIBUTE;
+        }
+        $declared_options{$coderef}++;
+        next ATTRIBUTE if ! defined $1; # No keys / values
+        foreach my $keyval (split qr/\s*,\s*/, $1) {
+            if ($keyval =~ m/^type\s*=\s*(\S+)\s*$/) {
+                my $type = $1;
+                $type =~ s/^"(.*)"$/$1/s;
+                $type =~ s/^'(.*)'$/$1/s;
+                my %canonicaltype =
+                    ( (map { $_ => "string"  } qw(=s string)),
+                      (map { $_ => "integer" } qw(=i int integer)),
+                      (map { $_ => "boolean" } qw(! bool boolean)),
+                    );
+                defined ($option_type{$coderef} = $canonicaltype{$type})
+                    or die qq'Bad type "$type" in attribute "$attr"';
+            } else {
+                die qq'Unknown key "$keyval" in attribute "$attr"';
+            }
+        }
+    }
+    return @retval;
+}
+
+=item I<_option_type($key)>
+
+Returns the type for option $key (either "boolean", "integer" or
+"string"), or undef if no such option exists.
+
+=cut
+
+sub _option_type {
+    my ($self, $key) = @_;
+	croak "Unknown question $key" unless (my $meth = $self->can($key));
+    my $type = $option_type{overload::StrVal($meth)};
+    $type ||= $key =~ m/^(install_|enable_)/ ? "boolean" :
+              $key =~ m/(_port)$/ ? "integer" :
+              "string";
+    return $type;
+}
+
+=item I<_option_is_mandatory($key)>
+
+Returns true if a value is mandatory for $key; always false in the
+case of a boolean.
+
+=cut
+
+sub _option_is_mandatory {
+    my ($self, $key) = @_;
+    return if $self->_option_type eq "boolean";
+    my $t = $self->_option_compute_template($key);
+    return $t->{mandatory} if exists $t->{mandatory};
+    return (exists $t->{default});
+}
+
+=item I<_option_default_value($key)>
+
+Returns the option's default value, taken either from the answers from
+the previous run of Build.PL (if available) or from the option
+template method's return value.
+
+=cut
+
+sub _option_default_value {
+    my ($self, $key) = @_;
+    my $previousrun = $self->notes("option:$key");
+    return $previousrun if defined $previousrun;
+    return $self->_option_compute_template($key)->{default};
+}
+
+=item I<_option_question($key)>
+
+Returns the question to ask interactively in order to get a value for
+option $key. The return value may be undef, indicating that the
+question shall not be asked interactively.
+
+=cut
+
+sub _option_question {
+    my ($self, $key) = @_;
+    my $question = $self->_option_compute_template($key)->{question};
+    $question .= '?' unless ($question =~ m/\?/);
+    return $question;
+}
+
+=item I<_option_compute_template($key)>
+
+Returns a reference to a hash with keys C<mandatory>, C<default> and
+C<question> according to what the option template method
+returned. Arranges to run the template method only once.
+
+=cut
+
+sub _option_compute_template {
+    my ($self, $key) = @_;
+
+    return $self->{"option_template"}->{$key} if
+        (exists $self->{"option_template"}->{$key});
+
+	croak "Unknown question $key" unless (my $meth = $self->can($key));
+    return ($self->{"option_template"}->{$key} =  { $meth->($self) });
+}
+
+=pod
+
+=item I<_option_check_value($key, $answerref)>
+
+Checks that the answer pointed to by $answerref matches the relevant
+invariants (namely type and mandatoryness). $$answerref may not be
+undef. It is canonicalized through in-place modification if need be
+(e.g. "yes" becomes 1 for booleans). In scalar context, returns undef
+if all went well or a warning message as text. In void context and in
+case of a problem, raises this same warning message as an exception.
+
+=cut
+
+sub _option_check_value {
+    my ($self, $key, $answerref) = @_;
+    my $problem;
+    my $type = $self->_option_type($key);
+    if (! defined $$answerref) {
+        $problem = "Internal error: \$\$answerref may not be undef";
+    } elsif ($type eq "boolean") {
+        $$answerref = 0 if (! $$answerref);
+        $$answerref =~ s/(yes|y|true)/1/i;
+        $$answerref =~ s/(no|n|false)/0/i;
+        $problem = "Option $key expects a boolean value"
+            unless ($$answerref =~ m/^\s*(0|1)\s*$/);
+        $$answerref = $1;
+    } elsif (! length $$answerref) {
+        $problem = "Option $key is mandatory" if
+            $self->_option_is_mandatory($key);
+    } elsif ($type eq "integer") {
+        $problem = "Option $key expects an integer"
+            unless ($$answerref =~ m/^\s*(-?\d+)\s*$/);
+        $$answerref = $1;
+    }
+    die $problem if ($problem && ! defined wantarray);
+    return $problem;
+}
+
+=item I<_process_options()>
+
+Runs L</option_value> for all known options, which in turn causes the
+command line switches to be processed and/or all appropriate
+interactive questions to be asked and answered.
+
+=cut
+
+sub _process_options {
+    my ($self) = @_;
+
+    # Walks @ISA looking for the names of all methods that are
+    # command-line options. Inspired from DB::methods_via in
+    # perl5db.pl
+    my $walk_isa; $walk_isa = sub {
+        my ($class, $seenref, $resultref) = @_;
+        return if $seenref->{$class}++;
+        no strict "refs";
+        push @$resultref, grep {
+            my $meth = *{${"${class}::"}{$_}}{CODE};
+            defined($meth) && $declared_options{overload::StrVal($meth)};
+        } (keys %{"${class}::"});
+
+        $walk_isa->($_, $seenref, $resultref) foreach @{"${class}::ISA"};
+    };
+    my @alloptions; $walk_isa->( (ref($self) or $self), {}, \@alloptions);
+    $self->option_value($_) foreach @alloptions;
+    return @alloptions;
+}
+
+=back
+
+=head2 Other Public Methods
+
+Those methods will be called automatically from within the generated
+./Build, but on the other hand one probably shouldn't be called
+directly from C<Build.PL> .
+
+=over
+
+=item I<ACTION_test>
+
+Overloaded to add t/lib to the test scripts' @INC (we sometimes put
+helper test classes in there), and also to allow one to specify a list
+of individual test scripts to run, e.g.
+
+   ./Build test t/sometest.t lib/Foo/Bar.pm
+
+For the developper's comfort, if only one test is specified in this
+way, I<ACTION_test> assumes that I<verbose> mode is wanted (see
+L<Module::Build/test>). This DWIM can be reversed on the command line,
+e.g. C<< ./Build test verbose=0 t/sometest.t >> (although this begs
+the question of why one would want to see the test statistics report
+for just I<one> script).
+
+I<ACTION_test> also automatically detects that we are running under
+Emacs' perldb mode (see L</massage_ARGV>) and runs the required test
+script under the Perl debugger. Running a particular test under the
+Emacs debugger is therefore as simple as typing:
+
+   M-x perldb <RET> /path/to/CPAN/module/Build test MyModule.pm
+
+This only works when testing one file at a time (for obvious reasons);
+if a relative path is passed (as shown), it is interpreted relative to
+the current directory set by Emacs (which, except under very bizarre
+conditions, will be the directory of the file currently being
+edited). The DWIM above applies here, conveniently causing the test
+suite being debugged to run in verbose mode.
+
+=cut
+
+sub ACTION_test {
+    my $self = shift;
+
+    local @INC = @INC;
+    push @INC, File::Spec->catdir($self->base_dir, "t", "lib");
+
+    my @files_to_test = map {
+        our $initial_cwd; # Set at BEGIN time, see L<_startperl>
+        File::Spec->rel2abs($_, $initial_cwd)
+    } (@{$self->{args}->{ARGV} || []});
+
+    if ($running_under_emacs_debugger && @files_to_test == 1) {
+        # We want to run this script under a slave_editor debugger, so
+        # as to implement the documented trick. The simplest way
+        # (although inelegant) is to bypass Module::Build and
+        # Test::Harness entirely, and run the child Perl
+        # ourselves. Most of the code below was therefore cobbled
+        # together from the real T::H version 2.40 and M::B 0.26
+        $self->depends_on('code'); # As in original ACTION_test
+
+        # Compute adequate @INC:
+        my @inc = do { my %inc_dupes; grep !$inc_dupes{$_}++, @INC };
+        if (is_win32) { s/[\\\/+]$// foreach @inc; }
+        # Add blib/lib and blib/arch like the original ACTION_test does:
+        unshift @inc,
+            File::Spec->catdir($self->base_dir(), $self->blib, 'lib'),
+                File::Spec->catdir($self->base_dir(), $self->blib, 'arch');
+        # Parse shebang line to set taintedness properly:
+        local *TEST;
+        open(TEST, $files_to_test[0]) or die
+            "Can't open $files_to_test[0]. $!\n";
+        my $shebang = <TEST>;
+        close(TEST) or print "Can't close $files_to_test[0]. $!\n";
+        my $taint = ( $shebang =~ /^#!.*\bperl.*\s-\w*([Tt]+)/ );
+        my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
+        system($perl, "-d",
+               ($taint ? ("-T") : ()),
+               (map { ("-I" => $_) } @inc),
+               $files_to_test[0], "-emacs");
+        return;
+    }
+
+    local $self->{FORCE_find_test_files_result}; # See L</find_test_files>
+    $self->{FORCE_find_test_files_result} = \@files_to_test if
+        @files_to_test;
+    # DWIM for ->{verbose} (see POD)
+    local $self->{properties} = $self->{properties};
+    if (@files_to_test == 1) {
+        $self->{properties}->{verbose} = 1 if
+            (! exists $self->{properties}->{verbose});
+    }
+
+    $self->SUPER::ACTION_test(@_);
+}
+
+=item I<massage_ARGV($ref_to_ARGV)>
+
+Called as part of this module's startup code, in order to debogosify
+the @ARGV array (to be passed as a reference) when we are invoked from
+Emacs' M-x perldb. L</ACTION_test> will afterwards be able to take
+advantage of the Emacs debugger we run under, by bogosifying the
+command line back before invoking the script to test.
+
+=cut
+
+massage_ARGV(\@ARGV);
+sub massage_ARGV {
+    my ($argvref) = @_;
+    my @argv = @$argvref;
+
+	if ($ENV{EMACS} && (grep {$_ eq "-emacs"} @argv) &&
+		$argv[0] eq "-d") {
+        $running_under_emacs_debugger = 1;
+
+        shift @argv; # Off with -d
+        # XEmacs foolishly assumes that the second word in the perldb
+		# line is a filename and turns it into e.g. "/my/path/test":
+        my (undef, undef, $build_command) =
+            File::Spec->splitpath(shift @argv);
+        @$argvref = ($build_command, grep {$_ ne "-emacs"} @argv);
+	}
+}
+
+=item I<ACTION_distmeta>
+
+Overloaded to ensure that .pm modules in inc/ don't get indexed.
+
+=cut
+
+sub ACTION_distmeta {
+    my $self = shift;
+
+    eval { require YAML } or die ($@ . <<"MESSAGE");
+
+YAML is required for distmeta to produce accurate results. Please
+install it and re-run this command.
+
+MESSAGE
+
+    my $retval = $self->SUPER::ACTION_distmeta(@_);
+
+    my $metafile = $self->can("metafile") ? # True as of Module::Build 0.2805
+        $self->metafile() : $self->{metafile};
+
+    my $fh = IO::File->new(">> $metafile")
+        or die "Can't open $metafile: $!";
+     do { $fh->print(<<"END_OF_META") and $fh->close() }
+no_index:
+  directory:
+    - example
+    - inc
+    - t
+END_OF_META
+         or die "Cannot write to $metafile: $!";
+    return $retval;
+}
+
+=item I<process_pm_files>
+
+Called internally in Build to convert lib/**.pm files into their
+blib/**.pm counterpart; overloaded here to remove the test suite (see
+L</Unit tests>) and standardize the copyright of the files authored by
+me.
+
+=cut
+
+sub process_pm_files {
+    no warnings "once";
+    local *copy_if_modified = \*process_pm_file_if_modified;
+    my $self = shift;
+    return $self->SUPER::process_pm_files(@_);
+}
+
+=item I<process_pm_file_if_modified(%args)>
+
+Does the same as L<copy_file_if_modified> (which it actually replaces
+while L<process_pm_files> runs), except that the L</new_pm_filter> is
+applied instead of performing a vanilla copy as L<Module::Build> does.
+
+=cut
+
+sub process_pm_file_if_modified {
+    my ($self, %args) = @_;
+    my ($from, $to) = @args{qw(from to)};
+    return if $self->up_to_date($from, $to); # Already fresh
+
+    # Create parent directories
+    File::Path::mkpath(File::Basename::dirname($to), 0, 0777);
+
+    # Do a filtering copy
+    print "$from -> $to\n" if $args{verbose};
+    die "Cannot open $from for reading: $!\n" unless
+        (my $fromfd = new IO::File($from, "r"));
+    die "Cannot open $to for writing: $!\n" unless
+        (my $tofd = new IO::File($to, "w"));
+
+    my $filter = $self->new_pm_filter;
+    while(my $line = <$fromfd>) {
+        my $moretext = $filter->filter($line);
+        if (defined($moretext) && length($moretext)) {
+            $tofd->print($moretext) or
+                die "Cannot write to $to: $!\n";
+        }
+        last if $filter->eof_reached();
+    }
+    $tofd->close() or die "Cannot close to $to: $!\n";
+}
+
+=item I<new_pm_filter>
+
+Creates and returns a fresh filter object (see
+L</My::Module::Build::PmFilter Ancillary Class>) that will be used by
+L</process_pm_file_if_modified> to process the text of the .pm files.
+Subclasses may find it convenient to overload I<new_pm_filter> in
+order to provide a different filter.  The filter object should obey
+the API set forth in L</My::Module::Build::PmFilter Ancillary Class>,
+although it need not inherit from same.
+
+=cut
+
+sub new_pm_filter { My::Module::Build::PmFilter->new }
+
+=item I<find_test_files()>
+
+Overloaded from parent class to treat all .pm files in C<lib/> and
+C<t/lib/> as unit tests if they use L<My::Tests::Below>, and to retain
+C<.t> test files in C<t/maintainer> if and only if
+L</maintainer_mode_enabled> is true.
+
+=cut
+
+sub find_test_files {
+    my $self = shift;
+
+    # Short-cut activated by L</ACTION_test>:
+    return $self->{FORCE_find_test_files_result} if
+        (defined $self->{FORCE_find_test_files_result});
+
+    my @tests = @{$self->SUPER::find_test_files(@_)};
+    # Short-cut activated by putting a 'test_files' key in the constructor
+    # arguments:
+    return @tests if $self->{test_files};
+
+    @tests = grep { ! m/^t.maintainer/ } @tests unless
+        ($self->maintainer_mode_enabled());
+
+    File::Find::find
+        ({no_chdir => 1, wanted => sub {
+              push(@tests, $_), return if m/My.Tests.Below\.pm$/;
+              my $module = File::Spec->catfile($self->base_dir, $_);
+              local *MODULE;
+              unless (open(MODULE, "<", $module)) {
+                  warn "Cannot open $module: $!";
+                  return;
+              }
+              push(@tests, $_) if grep {
+                  m/^require\s+My::Tests::Below\s+unless\s+caller/
+              } (<MODULE>);
+          }}, "lib", File::Spec->catdir("t", "lib"), "inc");
+
+    return \@tests;
+}
+
+=pod
+
+=item I<My::Module::Build::do_create_makefile_pl>
+
+=item I<My::Module::Build::HowAreYouGentlemen::fake_makefile>
+
+Overloaded respectively from L<Module::Build::Base> and
+L<Module::Build::Compat> so that typing
+
+=for My::Tests::Below "great justice" begin
+
+   perl Makefile.PL
+   make your time
+
+=for My::Tests::Below "great justice" end
+
+produces a helpful message in packages that have a Makefile.PL (see
+L<Module::Build/create_makefile_pl> for how to do that). You won't get
+signal if you use a "traditional" style Makefile.PL (but on the other
+hand the rest of My::Module::Build.pm will not work either, so don't
+do that).
+
+This is also a feature of an old GNU-make based build framework that I
+created in a former life. So there.
+
+=cut
+
+sub do_create_makefile_pl {
+  my ($self, %args) = @_;
+  warn("Cannot take off any Zig, sorry"),
+      return $self->SUPER::do_create_makefile_pl(%args) if ($args{fh});
+  $args{file} ||= 'Makefile.PL';
+  my $retval = $self->SUPER::do_create_makefile_pl(%args);
+  my $MakefilePL = read_file($args{file});
+  $MakefilePL = <<'PREAMBLE' . $MakefilePL;
+use FindBin qw($Bin);
+use lib "$Bin/inc";
+PREAMBLE
+  $MakefilePL =~ s|Module::Build::Compat->write_makefile|My::Module::Build::HowAreYouGentlemen->write_makefile|;
+  write_file($args{file}, $MakefilePL);
+  return $retval;
+}
+
+{
+    package My::Module::Build::HowAreYouGentlemen;
+    our @ISA=qw(Module::Build::Compat); # Do not explicitly load it because
+    # Makefile.PL will set up us the Module::Build::Compat itself (and
+    # we also want to take off every zig of bloat when
+    # My::Module::Build is loaded from elsewhere). Moreover, "use
+    # base" is not yet belong to us at this time.
+
+    sub fake_makefile {
+        my $self = shift;
+        return $self->SUPER::fake_makefile(@_). <<'MAIN_SCREEN_TURN_ON';
+# In 2101 AD war was beginning...
+your:
+	@echo
+	@echo -n "     All your codebase"
+
+time:
+	@echo " are belong to us !"
+	@echo
+
+MAIN_SCREEN_TURN_ON
+    }
+}
+
+=back
+
+=head2 Overloaded Internal Methods
+
+Yeah I know, that's a pretty stupid thing to do, but that's the best I
+could find to get Module::Build to do my bidding.
+
+=over
+
+=item I<_startperl>
+
+Overloaded from parent to attempt a chdir() into the right place in
+./Build during initialization. This is an essential enabler to the
+Emacs debugger support (see L</ACTION_test>) because we simply cannot
+tell where Emacs will be running us from.
+
+=cut
+
+sub _startperl {
+    my $self = shift;
+    my $basedir = $self->base_dir;
+    $basedir = Win32::GetShortPathName($basedir) if is_win32;
+    return $self->SUPER::_startperl(@_) . <<"MORE";
+
+# Hack by My::Module::Build to give the Emacs debugger one
+# more chance to work:
+use Cwd;
+BEGIN {
+  \$My::Module::Build::initial_cwd = \$My::Module::Build::initial_cwd =
+    Cwd::cwd;
+  chdir("$basedir") || 1;
+}
+MORE
+}
+
+=item I<_packages_inside($file)>
+
+Returns a list of Perl packages to be found inside $file. Overloaded
+from the parent class so as to refrain from parsing after the __END__
+marker.
+
+=cut
+
+sub _packages_inside {
+    # Copied 'n modified from the parent class, doubleplusshame on me!
+    my ($self, $file) = @_;
+    my $fh = IO::File->new($file) or die "Can't read $file: $!";
+    my @packages;
+
+    while(my (undef, $p) = $self->_next_code_line
+          ($fh, qr/^(?:__END__$|__DATA__$|[\s\{;]*package\s+([\w:]+))/)) {
+        last if ! defined $p;
+        push @packages, $p;
+    }
+    return @packages;
+}
+
+=back
+
+=head2 My::Module::Build::PmFilter Ancillary Class
+
+This ancillary class, serving both as an object-oriented interface and
+as a default implementation thereof, is the workhorse behind
+L</process_pm_files> and L</process_pm_file_if_modified>. It consists
+of a very simple filter API to transform the text of .pm files as they
+are copied over from lib/ to blib/ during the build process. The
+base-class implementation simply replaces copyright placeholders of
+the form "(C) DOMQ" with appropriate legalese, and removes the
+L<My::Tests::Below> test suite if one is found.
+
+Subclasses of I<My::Module::Build> need only overload
+L</new_pm_filter> in order to provide a different implementation of
+this .pm filter. The object returned by said overloaded
+I<new_pm_filter> needs only obey the API documented below for methods
+I<filter> and I<eof_reached>; it may or may not elicit to inherit from
+I<My::Module::Build::PmFilter> in order to do so.
+
+=over
+
+=cut
+
+package My::Module::Build::PmFilter;
+
+=item I<new()>
+
+Object constructor. Does nothing in the base class.
+
+=cut
+
+sub new { bless {}, shift }
+
+=item I<filter($line)>
+
+Given $line, a line read from a .pm file in lib, returns a piece of
+text that L</process_pm_file_if_modified> should replace this line
+with.  Note that it is perfectly appropriate for a filter
+implementation to buffer stuff, and therefore not always return
+something from I<filter>.
+
+The base class does not buffer. Rather, it substitutes standard
+copyright stanzas, and detects the end-of-file on behalf of
+L</eof_reached>.
+
+=cut
+
+sub filter {
+    my $self = shift;
+    local $_ = shift;
+
+    return "" if $self->eof_reached;
+
+    my $copyrightstring =
+        sprintf( "Copyright Dominique Quatravaux %d -".
+                 " Licensed under the same terms as Perl itself",
+                 (localtime(time))[5] + 1900 );
+
+    s/^ (.*)                  # Leading cruft (e.g. comment markers)
+      (?:\(C\)|\x{A9})      # "copyright" sign
+      (?:[ -])    .*        # spacer
+      (?i:DOMQ|Quatravaux)   # Yours truly (case insensitive)
+      /$1$copyrightstring/x;
+    if (m/^require My::Tests::Below unless caller/) {
+        $self->eof_reached(1);
+        return "1;\n";
+    } else {
+        return $_;
+    }
+}
+
+=item I<eof_reached()>
+
+Shall return true iff the end-of-file is reached and calling
+L</process_pm_line> further would just be a waste of time. Called
+exactly once by L</process_pm_file_if_modified> after each call to
+I<process_pm_line>.
+
+In the base class, I<eof_reached()> is just a passive accessor whose
+value is set by L</filter>.
+
+=cut
+
+sub eof_reached {
+    my $self = shift;
+    if (@_) {
+        $self->{eof} = shift;
+    } else {
+        return $self->{eof};
+    }
+}
+
+=back
+
+=head1 BUGS
+
+The zero-wing feature (see L</do_create_makefile_pl>) only works
+through the Makefile.PL compatibility mode. On the other hand,
+"./Build your time" would not sound quite right, would it?
+
+Perhaps the L</Dependent option graph> features should be repackaged
+as a standalone Module::Build plug-in.
+
+=head1 SEE ALSO
+
+L<My::Tests::Below>
+
+t/maintainer/*.t
+
+=cut
+
+require My::Tests::Below unless caller;
+
+1;
+
+__END__
+
+use Test::More "no_plan";
+
+########### Dependent graph stuff ################
+
+# We keep the tests in a separate package so that if we later decide
+# to refactor the dependent graph stuff into a standalone
+# Module::Build plug-in, a simple cut-n-paste operation will do the
+# job.
+do {
+    # We re-route the process of creating a Module::Build object to
+    # a fake package, so as not to make Module::Build itself part
+    # of the tests over the dependent graph stuff:
+    local @My::Module::Build::ISA=qw(Fake::Module::Build);
+
+    package Fake::Module::Build;
+
+    sub new { bless {}, shift }
+
+    # Various stuff that is being called by My::Module::Build as part
+    # of this test, and that we therefore need to stub out:
+    no warnings "redefine";
+    local *My::Module::Build::maintainer_mode_enabled = sub { 0 };
+    local *My::Module::Build::subclass = sub {
+        my ($self, %opts) = @_;
+        eval <<'HEADER' . $opts{code}; die $@ if $@;
+
+package Fake::Subclass;
+BEGIN { our @ISA=qw(My::Module::Build); }
+
+HEADER
+        return "Fake::Subclass";
+    };
+
+    sub notes {
+        my ($self, $k, @v) = @_;
+        if (@v) { $self->{notes}->{$k} = $v[0]; }
+        return $self->{notes}->{$k};
+    }
+
+    # "batch" version of ->prompt()
+    our %answers = ("Install module foo?" => 1);
+    sub prompt {
+        my ($self, $question) = @_;
+        die "Unexpected question $question" if
+            (! exists $answers{$question});
+        return delete $answers{$question}; # Will not answer twice
+        # the same question
+    }
+
+    package main2; # Do not to pollute the namespace of "main" with
+    # the "use" directives below - Still keeping refactoring in mind.
+
+    use Test::More;
+    use File::Slurp qw(read_file write_file);
+    use Fatal qw(mkdir chdir read_file write_file);
+
+    local @ARGV = qw(--noinstall-everything);
+
+    my $define_options =
+        My::Tests::Below->pod_code_snippet("option-graph");
+    $define_options =~ s/\.\.\.//g;
+    my $builder = eval $define_options; die $@ if $@;
+
+    isa_ok($builder, "Fake::Module::Build",
+           "construction of builder successful");
+
+    is(scalar keys %My::Module::Build::declared_options,
+       2, "Number of declarations seen");
+
+    is(scalar(keys %answers), 0, "All questions have been asked");
+    ok(! $builder->notes("option:install_everything"),
+          "note install_everything");
+    ok($builder->notes("option:install_module_foo"),
+          "note install_module_foo");
+    ok(! $builder->option_value("install_everything"),
+          "install_everything");
+    ok($builder->option_value("install_module_foo"),
+          "install_module_foo");
+
+    # Some whitebox testing here:
+    is($builder->_option_type("install_everything"), "boolean",
+       "implicit typing");
+    is($builder->_option_type("install_module_foo"), "boolean",
+       "explicit typing");
+}; # End of fixture for option graph tests
+
+####################### Main test suite ###########################
+
+use File::Slurp qw(read_file write_file);
+use File::Copy qw(copy); # which is not a standard requires_for_tests,
+                         # but since My::Module::Build only
+                         # self-tests when maintainer_mode_enabled() is true
+                         # this is no biggie.
+use File::Spec;
+use IO::Pipe;
+# Probably wise to add this in real test suites too:
+use Fatal qw(mkdir chdir read_file write_file copy);
+
+my $fakemoduledir =  My::Tests::Below->tempdir() . "/Fake-Module";
+mkdir($fakemoduledir);
+
+my $sample_Build_PL = My::Tests::Below->pod_code_snippet("synopsis");
+
+$sample_Build_PL =~ s/^(.*Acme::Pony.*)$/#$1/m; # As we say in french,
+    # faut pas _que_ deconner non plus.
+my $ordinary_arguments = <<'ORDINARY_ARGUMENTS';
+      module_name         => 'Fake::Module',
+      license             => 'perl',
+      dist_author         => 'Octave Hergebelle <hector@tdlgb.org>',
+      dist_version_from   => 'lib/Fake/Module.pm',
+      dist_abstract       => 'required for Module::Build 0.2805, sheesh',
+      requires            => {
+        'Module::Build' => 0,
+      },
+      create_makefile_pl  => 'passthrough',
+ORDINARY_ARGUMENTS
+ok($sample_Build_PL =~
+   s/^(.*##.*ordinary.*arguments.*)$/$ordinary_arguments/m,
+   "substitution 1 in synopsis");
+my $remainder = <<'REMAINDER';
+$builder->create_build_script();
+1;
+REMAINDER
+ok($sample_Build_PL =~ s/^(.*##.*remainder.*)$/$remainder/m,
+   "Substitution 2 in synopsis");
+write_file("$fakemoduledir/Build.PL", $sample_Build_PL);
+
+mkdir("$fakemoduledir/lib");
+mkdir("$fakemoduledir/lib/Fake");
+
+=begin this_pod_is_not_mine
+
+=cut
+
+my $fakemodule = <<'FAKE_MODULE';
+#!perl -w
+
+# (C) DOMQ
+
+use strict;
+package Fake::Module;
+
+our $VERSION = '0.42';
+
+=head1 NAME
+
+Fake::Module - This module is for testing My::Module::Build.pm
+
+=head1 SYNOPSIS
+
+Hey, gimme a break, this is a *bogus* package for Pete's sake!
+
+=sorry, you're right
+
+=cut the schizoid POD freakiness now will you? This is not M-x doctor!
+
+# Good.
+
+package Fake::Module::Ancillary::Class;
+
+1;
+
+__END__
+
+package This::Package::Should::Not::Be::Reported::In::METAyml;
+
+FAKE_MODULE
+
+=end this_pod_is_not_mine
+
+=cut
+
+write_file("$fakemoduledir/lib/Fake/Module.pm", $fakemodule);
+
+mkdir("$fakemoduledir/$_") foreach
+    (qw(inc inc/My inc/My/Module));
+
+use FindBin qw($Bin $Script);
+copy(File::Spec->catfile($Bin, $Script),
+            "$fakemoduledir/inc/My/Module/Build.pm");
+
+my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
+chdir($fakemoduledir);
+
+my $pipe = new IO::Pipe();
+$pipe->reader($perl, "$fakemoduledir/Build.PL");
+my $log = join('', <$pipe>);
+$pipe->close(); is($?, 0, "Running Build.PL");
+like($log, qr/version.*0.42/, "Build.PL found the version string");
+
+SKIP: {
+    skip "Not testing Build distmeta (YAML not available)", 2
+        unless eval { require YAML };
+
+    write_file("$fakemoduledir/test.sh",
+               "cd $fakemoduledir\n",
+               My::Tests::Below->pod_data_snippet("distmeta"));
+    system("/bin/sh", "-x", "$fakemoduledir/test.sh");
+    is($?, 0, "creating META.yml using documented procedure");
+    my $META_yml = read_file("$fakemoduledir/META.yml");
+    my $excerpt = My::Tests::Below->pod_data_snippet("META.yml excerpt");
+    $excerpt =~ s/\n+/\n/gs; $excerpt =~ s/^\n//s;
+    like($META_yml, qr/\Q$excerpt\E/,
+        "META.yml contains provisions against indexing My::* modules");
+    like($META_yml, qr/\bFake::Module\b/,
+        "Fake::Module is indexed");
+    like($META_yml, qr/\bFake::Module::Ancillary::Class\b/,
+        "Fake::Module::Ancillary::Class is indexed");
+    unlike($META_yml, qr/This::Package::Should::Not::Be::Reported/,
+        "META.yml should not index stuff that is after __END__");
+}
+
+# You have no chance to survive...
+test_Makefile_PL_your_time($_) for
+    ($sample_Build_PL, <<'SUBCLASSED_BUILD_PL');
+use strict;
+use warnings;
+
+use FindBin; use lib "$FindBin::Bin/inc";
+use My::Module::Build;
+
+my $subclass = My::Module::Build->subclass(code => "");
+
+my $builder = $subclass->new(
+      module_name         => 'Fake::Module',
+      license             => 'perl',
+      dist_author         => 'Octave Hergebelle <hector@tdlgb.org>',
+      dist_version_from   => 'lib/Fake/Module.pm',
+      dist_abstract       => 'required for Module::Build 0.2805, sheesh',
+      requires            => {
+        'Module::Build' => 0,
+      },
+      create_makefile_pl  => 'passthrough',
+
+   build_requires =>    {
+#         'Acme::Pony'    => 0,
+         My::Module::Build->requires_for_tests(),
+   },
+);
+
+$builder->create_build_script();
+1;
+
+
+SUBCLASSED_BUILD_PL
+
+sub test_Makefile_PL_your_time {
+    my ($Build_PL_contents) = @_;
+    write_file("$fakemoduledir/Build.PL", $Build_PL_contents);
+    system($perl, "$fakemoduledir/Build.PL");
+    is($?, 0, "Running Build.PL");
+    system("$fakemoduledir/Build", "dist");
+    is($?, 0, "Running Build dist");
+    unlink("$fakemoduledir/Fake-Module-0.42.tar.gz");
+    write_file("$fakemoduledir/test.sh",
+           <<"PREAMBLE",
+set -e
+cd $fakemoduledir
+PREAMBLE
+               My::Tests::Below->pod_data_snippet("great justice"));
+    $pipe = new IO::Pipe;
+    $pipe->reader("/bin/sh", "$fakemoduledir/test.sh");
+    my $text = join('', <$pipe>);
+    $pipe->close();
+    is($?, 0, "You are on the way to destruction")
+        or warn $text;
+    like($text, qr/belong/, "Still first hit on Google, after all these years!");
+}
+

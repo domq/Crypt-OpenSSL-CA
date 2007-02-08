@@ -1,0 +1,646 @@
+#!perl -w
+
+use strict;
+use warnings;
+
+package Crypt::OpenSSL::CA::Inline::C;
+
+=head1 NAME
+
+Crypt::OpenSSL::CA::Inline::C - A bag of XS and L<Inline::C> tricks
+
+=head1 SYNOPSIS
+
+=for My::Tests::Below "synopsis" begin
+
+  package Crypt::OpenSSL::CA::Foo;
+
+  use Crypt::OpenSSL::CA::Inline::C <<"C_CODE_SAMPLE";
+  #include <openssl/x509.h>
+
+  static
+  SV* mysub() {
+    // Your C code here
+  }
+
+  C_CODE_SAMPLE
+
+  # Lots and lots of the same...
+
+  use Crypt::OpenSSL::CA::Inline::C "__END__";
+
+=for My::Tests::Below "synopsis" end
+
+=head1 DESCRIPTION
+
+This package provides L<Inline::C> goodness to L<Crypt::OpenSSL::CA>
+during development, plus a few tricks of our own.  The idiom in
+L</SYNOPSIS>, used throughout the source code of
+L<Crypt::OpenSSL::CA>, recaps them all; noteworthy points are:
+
+=over
+
+=item the C<static>-newline trick
+
+Because the C language doesn't have namespaces, we don't want symbols
+named e.g. C<new> appearing in the .so's symbol tables: they could
+clash with other symbols defined by Perl, or with each other.
+Therefore we have to declare them C<static>, but doing this in the
+naïve way would cause L<Inline::C> to purposefully B<not> bind them
+with Perl... The winning trick is to put the C<static> word alone on
+its line, as demonstrated.
+
+=item the "__END__" pragma
+
+In order to accomodate hypothetical future extensions, the code in
+L<Crypt::OpenSSL::CA> should use the following pragma to signal that
+it won't attempt to add any L<Inline::C> code after this point:
+
+   use Crypt::OpenSSL::CA::Inline::C "__END__";
+
+=back
+
+=head2 Standard Library
+
+In addition to the standard library available to XS C code described
+in L<Inline::C>, L<perlxstut>, L<perlguts> and L<perlapi>, C code that
+compiles itself through I<Crypt::OpenSSL::CA::Inline::C> has access to
+the following C functions:
+
+=over
+
+=item I<static inline char* char0_value(SV* string)>
+
+Returns the string value of a Perl SV, making sure that it exists and
+is zero-terminated beforehand. See L<perlguts/Working with SVs>, look
+for the word "Nevertheless". I'm pretty sure there is a macro in
+Perl's convenience stuff that does exactly that already, but I don't
+know it...
+
+=item I<static inline SV* perl_wrap(class, pointer)>
+
+Creates read-only SV containing the integral value of C<pointer>,
+blesses it into class C<class> and returns it as a SV*.  The return
+value is an adequate Perl wrapper to stand for C<pointer>, as
+demonstrated in L<Inline::C-Cookbook/Object Oriented Inline>.
+
+=item I<perl_unwrap(class, typename, SV*)>
+
+The reverse of L</perl_wrap>.  Given a L</perl_wrap>ped SV*, asserts
+that it actually contains an object blessed in class C<class> (lest it
+C<croak>s), extracts the pointer within same, casts it into
+C<typename> and returns it.  This is a macro instead of a static
+inline, so as to be able to perform the polymorphic cast.
+
+=item I<static inline SV* openssl_string_to_SV(char* string)>
+
+Copies over C<string> to a newly-allocated C<SV*> Perl scalar, and
+then frees C<string> using C<OPENSSL_free()>.  Used to transfer
+ownership of strings from OpenSSL to Perl, and thereby ensure proper
+memory management.
+
+Note to I<Crypt::OpenSSL::CA> hackers: if C<string> is on an OpenSSL
+static buffer instead of having been allocated by OpenSSL, this will
+SEGV in trying to free() C<string> that was not malloc()'d; in this
+case you want to use L<perlapi/XSRETURN_PV> instead or some such.
+Check the OpenSSL documentation carefully, and make use of
+L<Crypt::OpenSSL::CA::Test/leaks_bytes_ok> to ascertain experimentally
+that your code doesn't leak memory.
+
+=item I<static inline SV* openssl_buf_to_SV(char* string, int length)>
+
+Like L</openssl_string_to_SV> except that the length is specified,
+which allows for C<string> to not contain null characters or not be
+zero-terminated.  Use this form e.g. for ASN.1 buffers returned by
+C<i2d_foobar> OpenSSL functions.
+
+=item I<static inline SV* BIO_mem_to_SV(BIO *bio)>
+
+This inline function is intended to be used to return scalar values
+(e.g. PEM strings and RSA moduli) constructed by OpenSSL.  Should be
+invoked thusly, after having freed all temporary resources except
+*bio:
+
+   return BIO_mem_to_SV(bio);
+
+I<BIO_mem_to_SV()> turns bio into a Perl scalar and returns it, or
+C<croak()>s trying (hence the requirement not to have any outstanding
+memory resources allocated in the caller).  Regardless of the outcome,
+C<bio> will be C<BIO_free>()d.
+
+=item I<static void ensure_openssl_stuff_loaded()>
+
+Ensures that various stuff is loaded inside OpenSSL, such as
+C<ERR_load_crypto_strings()>, C<OpenSSL_add_all_digests()> and all
+that jazz.  After this function returns,
+C<$Crypt::OpenSSL::CA::openssl_stuff_loaded> will be 1.  Calling it
+several times has no effect.
+
+=item I<static void sslcroak(char *format, ...)>
+
+Like L<perlapi/croak>, except that a blessed exception of class
+I<Crypt::OpenSSL::CA::Error> is generated.  The OpenSSL error
+stack, if any, gets recorded as an array reference inside the
+exception structure.
+
+Note to I<Crypt::OpenSSL::CA> hackers: please select the appropriate
+routine between I<sslcroak> and I<croak>, depending on whether the
+current error condition is being caused by OpenSSL or not; in this way
+callers are able to discriminate errors.  Also, don't be fooled into
+thinking that C<sslcroak> (or, for that matter, C<croak>) is the same
+thing in C and in Perl! Because calling C<sslcroak> will return
+control directly to Perl without running any C code, any and all
+temporary variables that have been allocated from C will fail to be
+de-allocated, thereby causing a memory leak.
+
+Internally, I<sslcroak> works by invoking L</_ssl_croak_callback>
+several times, using a rough equivalent of the following pseudo-code:
+
+  _sslcroak_callback("-message", $formattedstring);
+  _sslcroak_callback("-openssl", $openssl_errorstring_1);
+  _sslcroak_callback("-openssl", $openssl_errorstring_2);
+  ...
+  _sslcroak_callback("DONE");
+
+where $formattedstring is the C<sprintf>-formatted version of the
+arguments passed to I<sslcroak>, and the OpenSSL error strings are
+retrieved using B<ERR_get_error(3)> and B<ERR_error_string(3)>.
+
+=back
+
+=cut
+
+sub _c_boilerplate { <<'C_BOILERPLATE'; }
+#include <stdarg.h>         /* For varargs stuff in sslcroak() */
+#include <openssl/crypto.h> /* For OPENSSL_free() in openssl_buf_to_SV */
+#include <openssl/err.h>    /* For ERR_stuff in sslcroak() */
+#include <openssl/pem.h>    /* For BUF_MEM->data dereference in
+                               BIO_mem_to_SV(). WTF is this declaration
+                               doing in there?! */
+#include <openssl/bio.h>    /* Also for BIO_mem_to_SV() */
+
+#include <openssl/opensslv.h>
+#if OPENSSL_VERSION_NUMBER < 0x00905000
+#error OpenSSL version 0.9.5 is required in order to handle Unicode DNs.
+#endif
+
+static inline char* char0_value(SV* perlscalar) {
+     unsigned int length; char* retval;
+
+     SvPV(perlscalar, length);
+     if (! SvPOK(perlscalar)) { return ""; } // Undef
+     SvGROW(perlscalar, length + 1);
+     retval = SvPV_nolen(perlscalar);
+     retval[length] = '\0';
+     return retval;
+}
+
+static inline SV* perl_wrap(const char* class, void* pointer) {
+     SV*      obj = sv_setref_pv(newSV(0), class, pointer);
+     if (! obj) { croak("not enough memory"); }
+     SvREADONLY_on(SvRV(obj));
+     return obj;
+}
+
+#define perl_unwrap(class, typename, obj) \
+  ((typename) __perl_unwrap(__FILE__, __LINE__, (class), (obj)))
+
+static inline void* __perl_unwrap(const char* file, int line,
+                                  const char* class, SV* obj) {
+    if (!(sv_isobject(obj) && sv_isa(obj, class))) {
+      croak("%s:%d:perl_unwrap: got an invalid "
+                "Perl argument (expected an object blessed "
+                "in class ``%s'')", file, line, (class));
+    }
+    return (void *)SvIV(SvRV(obj));
+}
+
+static inline SV* openssl_buf_to_SV(char* string, int length) {
+/* Note that a newmortal is not wanted here, even though
+ * caller will typically return the SV* to Perl. This is because XS
+ * performs some magic of its own for functions that return an SV (as
+ * documented in L<perlxs/Returning SVs, AVs and HVs through RETVAL>)
+ * and Inline::C leverages that. */
+   SV* retval = newSVpv(string, length);
+   OPENSSL_free(string);
+   return retval;
+}
+
+static inline SV* openssl_string_to_SV(char* string) {
+   return openssl_buf_to_SV(string, 0);
+}
+
+static inline SV* BIO_mem_to_SV(BIO *mem) {
+   SV* retval;
+   BUF_MEM* buf;
+
+   BIO_get_mem_ptr(mem, &buf);
+   if (! buf) {
+        BIO_free(mem);
+        croak("BIO_get_mem_ptr failed");
+   }
+   retval = newSVpv(buf->data, 0);
+   if (! retval) {
+        BIO_free(mem);
+        croak("newSVpv failed");
+   }
+   BIO_free(mem);
+   return retval;
+}
+
+static inline void ensure_openssl_stuff_loaded() {
+    SV* already_loaded = get_sv
+      ("Crypt::OpenSSL::CA::openssl_stuff_loaded", 1);
+    if (SvOK(already_loaded)) { return; }
+    sv_setiv(already_loaded, 1);
+
+    ERR_load_crypto_strings();
+    OpenSSL_add_all_digests();
+    OpenSSL_add_all_algorithms();
+}
+
+#define ERRBUFSZ 512
+#define THISPACKAGE "Crypt::OpenSSL::CA"
+static void sslcroak(char *fmt, ...) {
+    va_list ap;                 /* The argument list hiding behind the
+                                   hyphens in the protype above */
+    dSP;                        /* Required to be able to perform Perl
+                                   callbacks */
+    char* argv[3];              /* The list of arguments to pass to the
+                                   callback */
+    char croakbuf[ERRBUFSZ];    /* The buffer to typeset the main error
+                                   message into */
+    char errbuf[ERRBUFSZ];      /* The buffer to typeset the auxillary error
+                                   messages from OpenSSL into */
+    SV* dollar_at;              /* Used to probe $@ to see if everything
+                                   went well with the callback */
+    unsigned long sslerr;       /* Will iterate through the OpenSSL
+                                   error stack */
+
+    ensure_openssl_stuff_loaded(); /* For error strings */
+
+    va_start(ap, fmt);
+    vsnprintf(croakbuf, ERRBUFSZ, fmt, ap);
+    croakbuf[ERRBUFSZ - 1] = '\0';
+    va_end(ap);
+
+    argv[0] = "-message";
+    argv[1] = croakbuf;
+    argv[2] = NULL;
+    call_argv(THISPACKAGE "::_sslcroak_callback", G_DISCARD, argv);
+
+    argv[0] = "-openssl";
+    argv[1] = errbuf;
+    while( (sslerr = ERR_get_error()) ) {
+        ERR_error_string_n(sslerr, errbuf, ERRBUFSZ);
+        errbuf[ERRBUFSZ - 1] = '\0';
+        call_argv(THISPACKAGE "::_sslcroak_callback", G_DISCARD, argv);
+    }
+    argv[0] = "DONE";
+    argv[1] = NULL;
+    call_argv(THISPACKAGE "::_sslcroak_callback", G_DISCARD, argv);
+
+    dollar_at = get_sv("@", FALSE);
+    if (dollar_at && sv_isobject(dollar_at)) {
+         // Success!
+         croak(Nullch);
+    } else {
+         // Something went bang, revert to the croakbuf.
+         croak(croakbuf);
+    }
+}
+
+C_BOILERPLATE
+
+=head1 INTERNALS
+
+The C<< use Crypt::OpenSSL::CA::Inline::C >> idiom described in
+L</SYNOPSIS> is implemented in terms of L<Inline>.
+
+DOCUMENTME
+
+=over
+
+=cut
+
+use Sub::Uplevel;
+BEGIN { die <<"MESSAGE" if $INC{"Inline.pm"}; }
+Sorry, Inline is already loaded and Sub::Uplevel will not be able to
+fool it.  Too bad, it means that Crypt::OpenSSL::CA::Inline::C will
+not work!
+MESSAGE
+
+use Inline::C ();
+
+my $debugging; BEGIN { $debugging = 1; } # FIXME: make this configurable
+
+=item I<import()>
+
+Called whenever one of the C<< use Crypt::OpenSSL::CA::Inline::C "foo"
+>> pragmas (listed in L</SYNOPSIS>) is seen by Perl; performs the
+actual magic of the module.  Mostly delegates to L<Inline/import>,
+with the following tweaks:
+
+=over
+
+=item *
+
+L<Inline::C> is configured to compile with all warnings turned into
+errors (i.e. C<-Wall -Werror>) and to link with the OpenSSL libraries;
+
+=item *
+
+the C code that implements the L</Standard Library> is prepended to
+the caller-provided C code.
+
+=back
+
+=cut
+
+sub import {
+    my ($class, $c_code) = @_;
+
+    return if ! defined $c_code; # A simple "use"
+
+    return $class->compile_everything if ($c_code eq "__END__");
+
+    my ($package) = caller;
+
+    uplevel 1, \&Inline::import,
+        (Inline => C => Config =>
+         NAME => $package,
+         ( $Crypt::OpenSSL::CA::VERSION ?
+           (VERSION => $Crypt::OpenSSL::CA::VERSION) : () ),
+         LIBS => join(" ", qw(-lcrypto -lssl),
+                      ($debugging ? qw(-g) : ())),
+         CCFLAGS => join(" ", qw(-Wall -Wno-unused -Werror),
+                         ($debugging ? qw(-g) : ())),
+         ( $debugging ? (CLEAN_AFTER_BUILD => 0) : () ));
+    uplevel 1, \&Inline::import, Inline => C => (_c_boilerplate . $c_code);
+    return;
+}
+
+=item I<compile_everything()>
+
+Called when L</the "__END__" pragma> is seen.  Currently does nothing.
+
+=cut
+
+sub compile_everything {}
+
+=item I<installed_version>
+
+Returns what the source code of this module will look like (with POD
+and everything) after it is installed.  The installed version is a dud
+stub; its L</import> method only loads the XS DLL, and it is no longer
+possible to alter the C code once the module has been installed.  The
+upside is that in thanks to that, L<Inline> is a dependency only at
+compile time.
+
+=begin this_pod_is_not_ours
+
+=cut
+
+sub installed_version { <<'INSTALLED_VERSION'; }
+#!perl -w
+
+package Crypt::OpenSSL::CA::Inline::C;
+
+use strict;
+require DynaLoader;
+
+sub import {
+    my ($class, $stuff) = @_;
+    return if ! defined $stuff;
+    return if $stuff eq "__END__";
+
+    my ($package) = caller;
+    no strict "refs";
+    push @{$package."::ISA"}, qw(DynaLoader);
+    $package->bootstrap;
+}
+
+=head1 NAME
+
+Crypt::OpenSSL::CA::Inline::C - The Inline magic (or lack thereof) for
+Crypt::OpenSSL::CA
+
+=head1 SYNOPSIS
+
+  use Crypt::OpenSSL::CA::Inline::C $and_the_rest_is_ignored;
+
+  # ...
+
+  use Crypt::OpenSSL::CA::Inline::C "__END__";
+
+=head1 DESCRIPTION
+
+This package simply loads the DLL that contains the part of
+L<Crypt::OpenSSL::CA> that is made of XS code. It is a stubbed-down
+version of the full-fledged I<Crypt::OpenSSL::CA::Inline::C> that
+replaces the real thing at module install time.
+
+There is more to I<Crypt::OpenSSL::CA::Inline::C>, such as the ability
+to dynamically modify and recompile the C code snippets in
+I<Crypt::OpenSSL::CA>'s code source. But in order to grasp hold of its
+power, you have to use the full source code tarball and not just the
+installed version.
+
+=cut
+
+1;
+
+INSTALLED_VERSION
+
+=end this_pod_is_not_ours
+
+=back
+
+=head1 TODO
+
+Right now it is not possible to invoke
+I<Crypt::OpenSSL::CA::Inline::C> several times from the same package,
+yet allowing that would be straightforward.  the immediate benefit of
+that would be to allow to intermingle POD and C code freely.
+
+=cut
+
+require My::Tests::Below unless caller();
+
+1;
+
+__END__
+
+=head1 TEST SUITE
+
+=cut
+
+use Test::More no_plan => 1;
+use Test::Group;
+use Crypt::OpenSSL::CA::Test qw(errstack_empty_ok
+                                cannot_check_SV_leaks leaks_SVs_ok
+                                cannot_check_bytes_leaks leaks_bytes_ok);
+use Data::Dumper;
+
+test "synopsis" => sub {
+    my $idiom = My::Tests::Below->pod_code_snippet("synopsis");
+
+    my $some_c_code = <<"SOME_C_CODE";
+return newSVsv(&PL_sv_undef);
+SOME_C_CODE
+
+    ok($idiom =~ s/^.*Your C code.*$/$some_c_code/im)
+        or die "Bad regexp - *AGAIN!*";
+    $idiom .= "mysub();";
+
+    my $result = eval($idiom); die $@ if $@;
+    is($result, undef);
+};
+
+test 'perl_wrap() and perl_unwrap()' => sub {
+    # Also doubles as a learning test for Inline
+    use Crypt::OpenSSL::CA::Inline::C <<"C_TEST";
+SV* make_bogus_object(int value) {
+    int* valueref = malloc(sizeof(int));
+    *valueref = value;
+    return perl_wrap("bogoclass", valueref);
+}
+
+int bogus_object_value(SV* object) {
+    int* self = perl_unwrap("bogoclass", int *, object);
+    return *self;
+}
+
+void free_bogus_object(SV* object) {
+    free(perl_unwrap("bogoclass", int *, object));
+    SvSetSV(object, &PL_sv_undef);
+}
+
+int deref_wrong_class(SV* object) {
+    int* self = perl_unwrap("anotherclass", int *, object);
+    return *self;
+}
+C_TEST
+
+    my $object = make_bogus_object(42);
+    is(ref($object), "bogoclass");
+    like($$object, qr/^[1-9][0-9]*$/, "looks like a number in the inside");
+    is(bogus_object_value($object), 42);
+    eval {
+        $$object = 46;
+        fail("attempt to modify object should have thrown");
+    };
+    isnt($@, '', "immutable OK");
+    eval {
+        deref_wrong_class($object);
+        fail("deref_wrong_class should have thrown");
+    };
+    like($@, qr/[0-9]+.*expected.*anotherclass/);
+    free_bogus_object($object); # So that the test doesn't leak
+    is($object, undef);
+};
+
+test '$c_boilerplate: char0_value()' => sub {
+    { package Char0Test; use Crypt::OpenSSL::CA::Inline::C <<"CHAR0_TEST"; }
+
+static
+char* TEST_char0_value(SV* scalar_under_test) {
+    return char0_value(scalar_under_test);
+}
+
+CHAR0_TEST
+
+    is(Char0Test::TEST_char0_value(2 * 12), "24", "char0_value");
+    is(Char0Test::TEST_char0_value(undef), "",
+       "char0_value shall not SEGV on undef");
+};
+
+skip_next_test "Devel::Leak needed" if cannot_check_SV_leaks;
+test 'OO and reference counting using $c_boilerplate' => sub {
+    # This also doubles as a learning test (for OO style)
+    { package Foo; use Crypt::OpenSSL::CA::Inline::C <<"C_TEST"; }
+static
+SV* new(char* class, int value) {
+    int* valueref = malloc(sizeof(int));
+    *valueref = value;
+    return perl_wrap(class, valueref);
+}
+
+static
+void DESTROY(SV* object) {
+    int* self = perl_unwrap("${\__PACKAGE__}", int *, object);
+    free(self);
+    // No attempting to alter *object in a DESTROY (causes a warning
+    // and is pointless).
+}
+C_TEST
+
+    local $SIG{__WARN__} = sub { fail }; # Catches errors in DESTROY
+    # that actually get turned into warnings
+
+    my $handle;
+    leaks_SVs_ok { map { Foo->new($_) } (1..1000) };
+};
+
+test "sslcroak()" => sub {
+    # Implementation lifted from Crypt::OpenSSL::CA so as
+    # to sever the circular dependency in tests: 
+    sub Crypt::OpenSSL::CA::_sslcroak_callback {
+        my ($key, $val) = @_;
+        if ($key eq "-message") {
+            $@ = { -message => $val };
+        } elsif ( ($key eq "-openssl") && (ref($@) eq "HASH") ) {
+            $@->{-openssl} ||= [];
+            push(@{$@->{-openssl}}, $val);
+        } elsif ( ($key eq "DONE") && (ref($@) eq "HASH") ) {
+            bless($@, "Crypt::OpenSSL::CA::Error");
+        } else {
+            warn sprintf
+                ("Bizarre callback state%s",
+                 (Data::Dumper->can("Dumper") ?
+                  " " . Data::Dumper::Dumper($@) : ""));
+        }
+    }
+
+    { package TestSslcroak; use Crypt::OpenSSL::CA::Inline::C <<"C_TEST"; }
+void argh() {
+    sslcroak("How are you %s", "gentlemen");
+}
+
+// For leak tests
+void ulp() {
+    char buf[1024];
+    memset(buf, (int) 'A', 1023);
+    buf[1023] = '\\0';
+    sslcroak(buf);
+}
+
+C_TEST
+
+    eval {
+        TestSslcroak::argh;
+        fail("Should have thrown");
+    };
+    is(ref($@), "Crypt::OpenSSL::CA::Error") or warn Dumper($@);
+    like($@->{-message}, qr/how are you gentlemen/i);
+
+    # Now with genuine OpenSSL barfage.
+    errstack_empty_ok();
+    use Net::SSLeay;
+    is(Net::SSLeay::BIO_new_file("/no/such/file_", "r"), 0);
+    eval { TestSslcroak::argh; fail("should have thrown") };
+    is(ref($@), "Crypt::OpenSSL::CA::Error");
+    is(ref($@->{-openssl}), "ARRAY");
+    cmp_ok(scalar(@{$@->{-openssl}}), ">", 0);
+    # FIXME: absolute positions in stack probably not robust enough.
+    like($@->{-openssl}->[0], qr/fopen/);
+    like($@->{-openssl}->[1], qr/no such file/); # Also checks that
+    # message wasn't truncated
+
+    unless (cannot_check_bytes_leaks) {
+        leaks_bytes_ok {
+            for(1..200) { eval { TestSslcroak::ulp }; }
+        };
+    }
+};
+
