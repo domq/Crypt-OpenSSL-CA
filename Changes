@@ -1,5 +1,9 @@
 Revision history for Crypt-OpenSSL-CA
 
-0.01    Date/time
-        First version, released on an unsuspecting world.
+0.04    23 Feb 2007
+        Added CRLv2 support
+        POD cleanup for public release
+
+0.03    08 Feb 2007
+        First release; X509v3 support
 

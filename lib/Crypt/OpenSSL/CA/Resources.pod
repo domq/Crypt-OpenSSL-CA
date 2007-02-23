@@ -198,14 +198,18 @@ Basics, security model, definition of the entities (EE, RA, CA),
 format of messages between these entities (that nobody in his right
 mind would bother to implement in this contrived way).
 
+=item B<RFC4514>
+
+Distinguished Names (L<Crypt::OpenSSL::CA::AlphabetSoup/DN>)
+
 =item B<RFC3280>
 
 Certificate and CRL formats, extensions in certificates, certificate
 validation algorithm.
 
-=item B<RFC4514>
+=item B<RFC3279>
 
-Distinguished Names (L<Crypt::OpenSSL::CA::AlphabetSoup/DN>)
+How one should set the C<keyUsage> bits in an X509 certificate.
 
 =item B<PKCS10>
 
@@ -220,12 +224,18 @@ PKIX deployment
 (L<http://wp.netscape.com/eng/security/ca-interface.html>).  Used by
 all browsers of the Netscape family.
 
+=item L<http://wp.netscape.com/eng/security/comm4-cert-exts.html>
+
+The specification of the Netscape certificate type X509v3 extension.
+Mostly obsolete, but it does make your certificates all that more
+christmas-treeish.
+
 =item B<PKCS12>
 
 A transport and backup format for X509 key material. Allows for
 bundling a user's certificate, its matching private key
 (password-protected), and the chain of CA certificates and CRLs that
-certified the user's certificate, all into a single binary blob.
+certify the user's certificate, all into a single binary blob.
 
 =item B<RFC2560>
 

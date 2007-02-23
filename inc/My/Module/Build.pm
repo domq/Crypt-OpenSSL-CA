@@ -36,7 +36,6 @@ highlighted below. Put this in Build.PL:
 
 =for My::Tests::Below "synopsis" end
 
-
 =head1 DESCRIPTION
 
 DOMQ is a guy who releases CPAN packages from time to time - you are
@@ -109,7 +108,7 @@ nevertheless>).
 
 =back
 
-=head2 Coding style supported by this module
+=head2 Coding Style and Practices supported by this module
 
 No, I don't want to go into silly regulations regarding whether I
 should start a new line before the opening bracket in a sub
@@ -125,6 +124,50 @@ L<My::Tests::Below> for details. My::Module::Build removes the test
 footer at build time so as not to waste any resources on the install
 target platform.
 
+=head3 Extended C<test> action
+
+The C<./Build test> action allows one to specify a list of individual
+test scripts to run, in a less cumbersome fashion than straight
+L<Module::Build>:
+
+   ./Build test t/sometest.t lib/Foo/Bar.pm
+
+For the developper's comfort, if only one test is specified in this
+way, I<ACTION_test> assumes that I<verbose> mode is wanted (see
+L<Module::Build/test>). This DWIM can be reversed on the command line:
+
+   ./Build test verbose=0 t/sometest.t
+
+In the case of running a single test, I<ACTION_test> also
+automatically detects that we are running under Emacs' perldb mode and
+runs the required test script under the Perl debugger. Running a
+particular test under Emacs perldb is therefore as simple as typing:
+
+   M-x perldb <RET> /path/to/CPAN/module/Build test MyModule.pm
+
+If a relative path is passed (as shown), it is interpreted relative to
+the current directory set by Emacs (which, except under very bizarre
+conditions, will be the directory of the file currently being
+edited). The verbose above applies here by default, conveniently
+causing the test script to run in verbose mode in the debugger.
+
+Like the original L<Module::Build/test>, C<./Build test> accepts
+supplemental key=value command line switches, as exemplified above
+with C<verbose>.  Additional switches are provided by
+I<My::Module::Build>:
+
+=over
+
+=item I<< use_blib=0 >>
+
+Load modules from the B<source> directory (e.g. C<lib>) instead of the
+build directories (e.g. C<blib/lib> and C<blib/arch>).  I use this to
+debug L<Inline::C> code in a tight tweak-run-tweak-run loop, a
+situation in which the MD5-on-C-code feature of L<Inline> saves a lot
+of rebuilds.
+
+=back
+
 =cut
 
 package My::Module::Build;
@@ -138,45 +181,13 @@ use File::Spec;
 use File::Find;
 use File::Slurp;
 
-=head1 INTERNAL DOCUMENTATION
+=head1 REFERENCE
 
-This section describes how My::Module::Build works internally. It
-should be useful only to people who intend to modify it.
-
-=head2 Global variables
+=head2 Constructors and Class Methods
 
 =over
 
-=item I<$running_under_emacs_debugger>
-
-Set by L</massage_ARGV> if (you guessed it) we are currently running
-under the Emacs debugger.
-
-=cut
-
-our $running_under_emacs_debugger;
-
-=back
-
-=head2 Constants
-
-=over
-
-=item is_win32
-
-Your usual bugware-enabling OS checks.
-
-=cut
-
-use constant is_win32 => scalar($^O =~ /^(MS)?Win32$/);
-
-=back
-
-=head2 Constructor and class methods
-
-=over
-
-=item I<new()>
+=item I<new(%named_options)>
 
 Overloaded from parent class in order to call
 L</check_maintainer_dependencies> if L</maintainer_mode_enabled> is
@@ -314,9 +325,31 @@ sub show_fatal_error {
     die "Fatal error, bailing out.\n";
 }
 
+=item I<use_blib()>
+
+=item I<use_blib($boolean)>
+
+Returns false if the user specified C<use_blib=0> on the command line,
+and true otherwise.  See L</Extended C<test> action> for details.  The
+form with a parameter allows one to set the value that will
+subsequently be returned by I<use_blib>, thereby overriding the
+command line.
+
+=cut
+
+sub use_blib {
+    my $self = shift;
+    if (! @_) {
+        return 1 if (! exists $self->{args}->{use_blib});
+        return ! ! $self->{args}->{use_blib};
+    } else {
+        $self->{use_blib} = ! ! shift;
+    }
+}
+
 =back
 
-=head3 Dependent option graph
+=head2 Dependent Option Graph
 
 This API is a wrapper around L<Module::Build/prompt>,
 L<Module::Build/get_options> and L<Module::Build/notes> to streamline
@@ -353,7 +386,7 @@ time, in the correct order if they depend on each other (as shown in
 the example), detect circular dependencies, and die if a mandatory
 question does not get an appropriate answer.
 
-=head4 Syntax for the option declarations
+=head3 Syntax
 
 As shown above, options are methods in a subclass to
 I<My::Module::Build> with a subroutine attribute of the form C<<
@@ -416,7 +449,7 @@ use Getopt::Long;
 use Carp;
 use overload; # for overload::StrVal
 
-=head4 Public methods for the dependent option graph
+=head3 Methods
 
 =over
 
@@ -449,62 +482,49 @@ sub option_value {
 
 =back
 
-=head4 Private methods for the dependent option graph
+=begin internals
+
+=head1 INTERNAL DOCUMENTATION
+
+This section describes how My::Module::Build works internally. It
+should be useful only to people who intend to modify it.
+
+=head2 Global variables
 
 =over
 
-=item I<_option_value_nocache($key)>
+=item I<$running_under_emacs_debugger>
 
-The workhorse behind L</option_value>, which is just a caching wrapper.
+Set by L</_massage_ARGV> if (you guessed it) we are currently running
+under the Emacs debugger.
 
 =cut
 
-sub _option_value_nocache {
-    my ($self, $key) = @_;
+our $running_under_emacs_debugger;
 
-    # return $self->_option_default_value($key) if
-    #         ($self->_option_phase($key) ne $self->{phase});
+=back
 
-    do { # Look at command line
-        my $keyopt = lc($key); $keyopt =~ s/_/-/g;
+=head2 Constants
 
-        my %type2getopt = ("string" => "=s", "integer" => "=i",
-                           "boolean" => "!");
-        my $getopt = new Getopt::Long::Parser(config => [qw(pass_through)]);
-        my $type = $self->_option_type($key);
-        my $retval;
-        $getopt->getoptions($keyopt . $type2getopt{$type} => \$retval)
-        or die "Bad value for --$keyopt command-line option".
-            " (expected $type)\n";
-        if (defined $retval) {
-            $self->_option_check_value($key, \$retval);
-            return $retval;
-        }
-    };
+=over
 
-    my $default = $self->_option_default_value($key);
+=item is_win32
 
-    if (defined(my $question = $self->_option_question($key))) { # Ask user
-        if ($self->_option_type($key) eq "boolean") {
-            $default = $default ? "yes" : "no";
-        }
+Your usual bugware-enabling OS checks.
 
-        ASK_AGAIN: {
-            my $answer = $self->prompt($question, $default);
-            my $problem = $self->_option_check_value($key, \$answer);
-            return $answer if (! $problem);
+=cut
 
-            if (-t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT))) {
-                warn $problem;
-                redo ASK_AGAIN;
-            } else {
-                die $problem;
-            }
-        }
-    };
-    return $default;
-}
+use constant is_win32 => scalar($^O =~ /^(MS)?Win32$/);
 
+=back
+
+=head2 Other Public Methods
+
+Those methods will be called automatically from within the generated
+./Build, but on the other hand one probably shouldn't call them
+directly from C<Build.PL> .
+
+=over
 
 =item I<subclass(%named_arguments)>
 
@@ -534,232 +554,14 @@ KLUDGE_ME_UP
     return $pack->SUPER::subclass(%opts);
 }
 
-=item I<MODIFY_CODE_ATTRIBUTES($package, $coderef, @attrs)>
-
-Automatically invoked by Perl when parsing subroutine attributes (see
-L</attributes>); parses and stores the C<Config_Option> attributes
-described in L</Syntax for the option declarations>.
-
-=cut
-
-our %declared_options; our %option_type;
-sub MODIFY_CODE_ATTRIBUTES {
-    my ($package, $coderef, @attrs) = @_;
-    $coderef = overload::StrVal($coderef);
-    my @retval;
-    ATTRIBUTE: foreach my $attr (@attrs) {
-        unless ($attr =~ m/^\s*Config_Option\s*(?:|\(([^()]*)\))\s*$/) {
-            push @retval, $attr; # Pass to downstream handlers
-            next ATTRIBUTE;
-        }
-        $declared_options{$coderef}++;
-        next ATTRIBUTE if ! defined $1; # No keys / values
-        foreach my $keyval (split qr/\s*,\s*/, $1) {
-            if ($keyval =~ m/^type\s*=\s*(\S+)\s*$/) {
-                my $type = $1;
-                $type =~ s/^"(.*)"$/$1/s;
-                $type =~ s/^'(.*)'$/$1/s;
-                my %canonicaltype =
-                    ( (map { $_ => "string"  } qw(=s string)),
-                      (map { $_ => "integer" } qw(=i int integer)),
-                      (map { $_ => "boolean" } qw(! bool boolean)),
-                    );
-                defined ($option_type{$coderef} = $canonicaltype{$type})
-                    or die qq'Bad type "$type" in attribute "$attr"';
-            } else {
-                die qq'Unknown key "$keyval" in attribute "$attr"';
-            }
-        }
-    }
-    return @retval;
-}
-
-=item I<_option_type($key)>
-
-Returns the type for option $key (either "boolean", "integer" or
-"string"), or undef if no such option exists.
-
-=cut
-
-sub _option_type {
-    my ($self, $key) = @_;
-	croak "Unknown question $key" unless (my $meth = $self->can($key));
-    my $type = $option_type{overload::StrVal($meth)};
-    $type ||= $key =~ m/^(install_|enable_)/ ? "boolean" :
-              $key =~ m/(_port)$/ ? "integer" :
-              "string";
-    return $type;
-}
-
-=item I<_option_is_mandatory($key)>
-
-Returns true if a value is mandatory for $key; always false in the
-case of a boolean.
-
-=cut
-
-sub _option_is_mandatory {
-    my ($self, $key) = @_;
-    return if $self->_option_type eq "boolean";
-    my $t = $self->_option_compute_template($key);
-    return $t->{mandatory} if exists $t->{mandatory};
-    return (exists $t->{default});
-}
-
-=item I<_option_default_value($key)>
-
-Returns the option's default value, taken either from the answers from
-the previous run of Build.PL (if available) or from the option
-template method's return value.
-
-=cut
-
-sub _option_default_value {
-    my ($self, $key) = @_;
-    my $previousrun = $self->notes("option:$key");
-    return $previousrun if defined $previousrun;
-    return $self->_option_compute_template($key)->{default};
-}
-
-=item I<_option_question($key)>
-
-Returns the question to ask interactively in order to get a value for
-option $key. The return value may be undef, indicating that the
-question shall not be asked interactively.
-
-=cut
-
-sub _option_question {
-    my ($self, $key) = @_;
-    my $question = $self->_option_compute_template($key)->{question};
-    $question .= '?' unless ($question =~ m/\?/);
-    return $question;
-}
-
-=item I<_option_compute_template($key)>
-
-Returns a reference to a hash with keys C<mandatory>, C<default> and
-C<question> according to what the option template method
-returned. Arranges to run the template method only once.
-
-=cut
-
-sub _option_compute_template {
-    my ($self, $key) = @_;
-
-    return $self->{"option_template"}->{$key} if
-        (exists $self->{"option_template"}->{$key});
-
-	croak "Unknown question $key" unless (my $meth = $self->can($key));
-    return ($self->{"option_template"}->{$key} =  { $meth->($self) });
-}
-
-=pod
-
-=item I<_option_check_value($key, $answerref)>
-
-Checks that the answer pointed to by $answerref matches the relevant
-invariants (namely type and mandatoryness). $$answerref may not be
-undef. It is canonicalized through in-place modification if need be
-(e.g. "yes" becomes 1 for booleans). In scalar context, returns undef
-if all went well or a warning message as text. In void context and in
-case of a problem, raises this same warning message as an exception.
-
-=cut
-
-sub _option_check_value {
-    my ($self, $key, $answerref) = @_;
-    my $problem;
-    my $type = $self->_option_type($key);
-    if (! defined $$answerref) {
-        $problem = "Internal error: \$\$answerref may not be undef";
-    } elsif ($type eq "boolean") {
-        $$answerref = 0 if (! $$answerref);
-        $$answerref =~ s/(yes|y|true)/1/i;
-        $$answerref =~ s/(no|n|false)/0/i;
-        $problem = "Option $key expects a boolean value"
-            unless ($$answerref =~ m/^\s*(0|1)\s*$/);
-        $$answerref = $1;
-    } elsif (! length $$answerref) {
-        $problem = "Option $key is mandatory" if
-            $self->_option_is_mandatory($key);
-    } elsif ($type eq "integer") {
-        $problem = "Option $key expects an integer"
-            unless ($$answerref =~ m/^\s*(-?\d+)\s*$/);
-        $$answerref = $1;
-    }
-    die $problem if ($problem && ! defined wantarray);
-    return $problem;
-}
-
-=item I<_process_options()>
-
-Runs L</option_value> for all known options, which in turn causes the
-command line switches to be processed and/or all appropriate
-interactive questions to be asked and answered.
-
-=cut
-
-sub _process_options {
-    my ($self) = @_;
-
-    # Walks @ISA looking for the names of all methods that are
-    # command-line options. Inspired from DB::methods_via in
-    # perl5db.pl
-    my $walk_isa; $walk_isa = sub {
-        my ($class, $seenref, $resultref) = @_;
-        return if $seenref->{$class}++;
-        no strict "refs";
-        push @$resultref, grep {
-            my $meth = *{${"${class}::"}{$_}}{CODE};
-            defined($meth) && $declared_options{overload::StrVal($meth)};
-        } (keys %{"${class}::"});
-
-        $walk_isa->($_, $seenref, $resultref) foreach @{"${class}::ISA"};
-    };
-    my @alloptions; $walk_isa->( (ref($self) or $self), {}, \@alloptions);
-    $self->option_value($_) foreach @alloptions;
-    return @alloptions;
-}
-
-=back
-
-=head2 Other Public Methods
-
-Those methods will be called automatically from within the generated
-./Build, but on the other hand one probably shouldn't be called
-directly from C<Build.PL> .
-
-=over
-
 =item I<ACTION_test>
 
 Overloaded to add t/lib to the test scripts' @INC (we sometimes put
-helper test classes in there), and also to allow one to specify a list
-of individual test scripts to run, e.g.
+helper test classes in there), and also to implement the features
+described in L</Extended test action>.  See also L</_massage_ARGV> for
+more bits of the Emacs debugger support code.
 
-   ./Build test t/sometest.t lib/Foo/Bar.pm
-
-For the developper's comfort, if only one test is specified in this
-way, I<ACTION_test> assumes that I<verbose> mode is wanted (see
-L<Module::Build/test>). This DWIM can be reversed on the command line,
-e.g. C<< ./Build test verbose=0 t/sometest.t >> (although this begs
-the question of why one would want to see the test statistics report
-for just I<one> script).
-
-I<ACTION_test> also automatically detects that we are running under
-Emacs' perldb mode (see L</massage_ARGV>) and runs the required test
-script under the Perl debugger. Running a particular test under the
-Emacs debugger is therefore as simple as typing:
-
-   M-x perldb <RET> /path/to/CPAN/module/Build test MyModule.pm
-
-This only works when testing one file at a time (for obvious reasons);
-if a relative path is passed (as shown), it is interpreted relative to
-the current directory set by Emacs (which, except under very bizarre
-conditions, will be the directory of the file currently being
-edited). The DWIM above applies here, conveniently causing the test
-suite being debugged to run in verbose mode.
+=back
 
 =cut
 
@@ -768,6 +570,14 @@ sub ACTION_test {
 
     local @INC = @INC;
     push @INC, File::Spec->catdir($self->base_dir, "t", "lib");
+
+    # Implements the use_blib=0 feature:
+    local *blib = sub {
+        my $self = shift;
+
+        return $self->base_dir() if ! $self->use_blib;
+        return $self->SUPER::blib(@_);
+    };
 
     my @files_to_test = map {
         our $initial_cwd; # Set at BEGIN time, see L<_startperl>
@@ -816,34 +626,6 @@ sub ACTION_test {
     }
 
     $self->SUPER::ACTION_test(@_);
-}
-
-=item I<massage_ARGV($ref_to_ARGV)>
-
-Called as part of this module's startup code, in order to debogosify
-the @ARGV array (to be passed as a reference) when we are invoked from
-Emacs' M-x perldb. L</ACTION_test> will afterwards be able to take
-advantage of the Emacs debugger we run under, by bogosifying the
-command line back before invoking the script to test.
-
-=cut
-
-massage_ARGV(\@ARGV);
-sub massage_ARGV {
-    my ($argvref) = @_;
-    my @argv = @$argvref;
-
-	if ($ENV{EMACS} && (grep {$_ eq "-emacs"} @argv) &&
-		$argv[0] eq "-d") {
-        $running_under_emacs_debugger = 1;
-
-        shift @argv; # Off with -d
-        # XEmacs foolishly assumes that the second word in the perldb
-		# line is a filename and turns it into e.g. "/my/path/test":
-        my (undef, undef, $build_command) =
-            File::Spec->splitpath(shift @argv);
-        @$argvref = ($build_command, grep {$_ ne "-emacs"} @argv);
-	}
 }
 
 =item I<ACTION_distmeta>
@@ -1005,11 +787,11 @@ L<Module::Build::Compat> so that typing
 produces a helpful message in packages that have a Makefile.PL (see
 L<Module::Build/create_makefile_pl> for how to do that). You won't get
 signal if you use a "traditional" style Makefile.PL (but on the other
-hand the rest of My::Module::Build.pm will not work either, so don't
+hand the rest of I<My::Module::Build> will not work either, so don't
 do that).
 
-This is also a feature of an old GNU-make based build framework that I
-created in a former life. So there.
+This easter egg was a feature of an old GNU-make based build framework
+that I created in a former life.  So there.
 
 =cut
 
@@ -1033,7 +815,7 @@ PREAMBLE
     package My::Module::Build::HowAreYouGentlemen;
     our @ISA=qw(Module::Build::Compat); # Do not explicitly load it because
     # Makefile.PL will set up us the Module::Build::Compat itself (and
-    # we also want to take off every zig of bloat when
+    # also we want to take off every zig of bloat when
     # My::Module::Build is loaded from elsewhere). Moreover, "use
     # base" is not yet belong to us at this time.
 
@@ -1108,6 +890,286 @@ sub _packages_inside {
         push @packages, $p;
     }
     return @packages;
+}
+
+=back
+
+=head2 Private Methods for the Dependent Option Graph
+
+=over
+
+=item I<MODIFY_CODE_ATTRIBUTES($package, $coderef, @attrs)>
+
+Automatically invoked by Perl when parsing subroutine attributes (see
+L</attributes>); parses and stores the C<Config_Option> attributes
+described in L</Syntax for the option declarations>.
+
+=cut
+
+our %declared_options; our %option_type;
+sub MODIFY_CODE_ATTRIBUTES {
+    my ($package, $coderef, @attrs) = @_;
+    $coderef = overload::StrVal($coderef);
+    my @retval;
+    ATTRIBUTE: foreach my $attr (@attrs) {
+        unless ($attr =~ m/^\s*Config_Option\s*(?:|\(([^()]*)\))\s*$/) {
+            push @retval, $attr; # Pass to downstream handlers
+            next ATTRIBUTE;
+        }
+        $declared_options{$coderef}++;
+        next ATTRIBUTE if ! defined $1; # No keys / values
+        foreach my $keyval (split qr/\s*,\s*/, $1) {
+            if ($keyval =~ m/^type\s*=\s*(\S+)\s*$/) {
+                my $type = $1;
+                $type =~ s/^"(.*)"$/$1/s;
+                $type =~ s/^'(.*)'$/$1/s;
+                my %canonicaltype =
+                    ( (map { $_ => "string"  } qw(=s string)),
+                      (map { $_ => "integer" } qw(=i int integer)),
+                      (map { $_ => "boolean" } qw(! bool boolean)),
+                    );
+                defined ($option_type{$coderef} = $canonicaltype{$type})
+                    or die qq'Bad type "$type" in attribute "$attr"';
+            } else {
+                die qq'Unknown key "$keyval" in attribute "$attr"';
+            }
+        }
+    }
+    return @retval;
+}
+
+=item I<_option_value_nocache($key)>
+
+The workhorse behind L</option_value>, which is just a caching wrapper.
+
+=cut
+
+sub _option_value_nocache {
+    my ($self, $key) = @_;
+
+    # return $self->_option_default_value($key) if
+    #         ($self->_option_phase($key) ne $self->{phase});
+
+    do { # Look at command line
+        my $keyopt = lc($key); $keyopt =~ s/_/-/g;
+
+        my %type2getopt = ("string" => "=s", "integer" => "=i",
+                           "boolean" => "!");
+        my $getopt = new Getopt::Long::Parser(config => [qw(pass_through)]);
+        my $type = $self->_option_type($key);
+        my $retval;
+        $getopt->getoptions($keyopt . $type2getopt{$type} => \$retval)
+        or die "Bad value for --$keyopt command-line option".
+            " (expected $type)\n";
+        if (defined $retval) {
+            $self->_option_check_value($key, \$retval);
+            return $retval;
+        }
+    };
+
+    my $default = $self->_option_default_value($key);
+
+    if (defined(my $question = $self->_option_question($key))) { # Ask user
+        if ($self->_option_type($key) eq "boolean") {
+            $default = $default ? "yes" : "no";
+        }
+
+        ASK_AGAIN: {
+            my $answer = $self->prompt($question, $default);
+            my $problem = $self->_option_check_value($key, \$answer);
+            return $answer if (! $problem);
+
+            if (-t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT))) {
+                warn $problem;
+                redo ASK_AGAIN;
+            } else {
+                die $problem;
+            }
+        }
+    };
+    return $default;
+}
+
+=item I<_option_type($key)>
+
+Returns the type for option $key (either "boolean", "integer" or
+"string"), or undef if no such option exists.
+
+=cut
+
+sub _option_type {
+    my ($self, $key) = @_;
+	croak "Unknown question $key" unless (my $meth = $self->can($key));
+    my $type = $option_type{overload::StrVal($meth)};
+    $type ||= $key =~ m/^(install_|enable_)/ ? "boolean" :
+              $key =~ m/(_port)$/ ? "integer" :
+              "string";
+    return $type;
+}
+
+=item I<_option_is_mandatory($key)>
+
+Returns true if a value is mandatory for $key; always false in the
+case of a boolean.
+
+=cut
+
+sub _option_is_mandatory {
+    my ($self, $key) = @_;
+    return if $self->_option_type eq "boolean";
+    my $t = $self->_option_compute_template($key);
+    return $t->{mandatory} if exists $t->{mandatory};
+    return (exists $t->{default});
+}
+
+=item I<_option_default_value($key)>
+
+Returns the option's default value, taken either from the answers from
+the previous run of Build.PL (if available) or from the option
+template method's return value.
+
+=cut
+
+sub _option_default_value {
+    my ($self, $key) = @_;
+    my $previousrun = $self->notes("option:$key");
+    return $previousrun if defined $previousrun;
+    return $self->_option_compute_template($key)->{default};
+}
+
+=item I<_option_question($key)>
+
+Returns the question to ask interactively in order to get a value for
+option $key. The return value may be undef, indicating that the
+question shall not be asked interactively.
+
+=cut
+
+sub _option_question {
+    my ($self, $key) = @_;
+    my $question = $self->_option_compute_template($key)->{question};
+    $question .= '?' unless ($question =~ m/\?/);
+    return $question;
+}
+
+=item I<_option_compute_template($key)>
+
+Returns a reference to a hash with keys C<mandatory>, C<default> and
+C<question> according to what the option template method
+returned. Arranges to run the template method only once.
+
+=cut
+
+sub _option_compute_template {
+    my ($self, $key) = @_;
+
+    return $self->{"option_template"}->{$key} if
+        (exists $self->{"option_template"}->{$key});
+
+	croak "Unknown question $key" unless (my $meth = $self->can($key));
+    return ($self->{"option_template"}->{$key} =  { $meth->($self) });
+}
+
+=pod
+
+=item I<_option_check_value($key, $answerref)>
+
+Checks that the answer pointed to by $answerref matches the relevant
+invariants (namely type and mandatoryness). $$answerref may not be
+undef. It is canonicalized through in-place modification if need be
+(e.g. "yes" becomes 1 for booleans). In scalar context, returns undef
+if all went well or a warning message as text. In void context and in
+case of a problem, raises this same warning message as an exception.
+
+=cut
+
+sub _option_check_value {
+    my ($self, $key, $answerref) = @_;
+    my $problem;
+    my $type = $self->_option_type($key);
+    if (! defined $$answerref) {
+        $problem = "Internal error: \$\$answerref may not be undef";
+    } elsif ($type eq "boolean") {
+        $$answerref = 0 if (! $$answerref);
+        $$answerref =~ s/(yes|y|true)/1/i;
+        $$answerref =~ s/(no|n|false)/0/i;
+        $problem = "Option $key expects a boolean value"
+            unless ($$answerref =~ m/^\s*(0|1)\s*$/);
+        $$answerref = $1;
+    } elsif (! length $$answerref) {
+        $problem = "Option $key is mandatory" if
+            $self->_option_is_mandatory($key);
+    } elsif ($type eq "integer") {
+        $problem = "Option $key expects an integer"
+            unless ($$answerref =~ m/^\s*(-?\d+)\s*$/);
+        $$answerref = $1;
+    }
+    die $problem if ($problem && ! defined wantarray);
+    return $problem;
+}
+
+=item I<_process_options()>
+
+Runs L</option_value> for all known options, which in turn causes the
+command line switches to be processed and/or all appropriate
+interactive questions to be asked and answered.
+
+=cut
+
+sub _process_options {
+    my ($self) = @_;
+
+    # Walks @ISA looking for the names of all methods that are
+    # command-line options. Inspired from DB::methods_via in
+    # perl5db.pl
+    my $walk_isa; $walk_isa = sub {
+        my ($class, $seenref, $resultref) = @_;
+        return if $seenref->{$class}++;
+        no strict "refs";
+        push @$resultref, grep {
+            my $meth = *{${"${class}::"}{$_}}{CODE};
+            defined($meth) && $declared_options{overload::StrVal($meth)};
+        } (keys %{"${class}::"});
+
+        $walk_isa->($_, $seenref, $resultref) foreach @{"${class}::ISA"};
+    };
+    my @alloptions; $walk_isa->( (ref($self) or $self), {}, \@alloptions);
+    $self->option_value($_) foreach @alloptions;
+    return @alloptions;
+}
+
+=back
+
+=head2 Other Private Methods
+
+=over
+
+=item I<_massage_ARGV($ref_to_ARGV)>
+
+Called as part of this module's startup code, in order to debogosify
+the @ARGV array (to be passed as a reference) when we are invoked from
+Emacs' M-x perldb. L</ACTION_test> will afterwards be able to take
+advantage of the Emacs debugger we run under, by bogosifying the
+command line back before invoking the script to test.
+
+=cut
+
+_massage_ARGV(\@ARGV);
+sub _massage_ARGV {
+    my ($argvref) = @_;
+    my @argv = @$argvref;
+
+	if ($ENV{EMACS} && (grep {$_ eq "-emacs"} @argv) &&
+		$argv[0] eq "-d") {
+        $running_under_emacs_debugger = 1;
+
+        shift @argv; # Off with -d
+        # XEmacs foolishly assumes that the second word in the perldb
+		# line is a filename and turns it into e.g. "/my/path/test":
+        my (undef, undef, $build_command) =
+            File::Spec->splitpath(shift @argv);
+        @$argvref = ($build_command, grep {$_ ne "-emacs"} @argv);
+	}
 }
 
 =back
@@ -1205,11 +1267,13 @@ sub eof_reached {
 
 =back
 
+=end internals
+
 =head1 BUGS
 
-The zero-wing feature (see L</do_create_makefile_pl>) only works
-through the Makefile.PL compatibility mode. On the other hand,
-"./Build your time" would not sound quite right, would it?
+The zero-wing easter egg only works through the Makefile.PL
+compatibility mode. On the other hand, "./Build your time" would not
+sound quite right, would it?
 
 Perhaps the L</Dependent option graph> features should be repackaged
 as a standalone Module::Build plug-in.

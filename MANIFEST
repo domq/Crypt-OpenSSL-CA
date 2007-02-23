@@ -7,14 +7,15 @@ lib/Crypt/OpenSSL/CA/AlphabetSoup.pod
 lib/Crypt/OpenSSL/CA/Inline/C.pm
 lib/Crypt/OpenSSL/CA/Resources.pod
 Makefile.PL
-MANIFEST
-MANIFEST.bak
-MANIFEST.SKIP
-META.yml			# Will be created by "make dist"
+MANIFEST			This list of files
+META.yml
 README
+t/acceptance-crlv2.t
+t/acceptance-delta-crl.t
 t/acceptance-make-x509-cert.t
 t/lib/Crypt/OpenSSL/CA/Test.pm
 t/maintainer/nobreakpoints.t
 t/maintainer/pod-coverage.t
+t/maintainer/pod-source.t
 t/maintainer/pod.t
 t/README

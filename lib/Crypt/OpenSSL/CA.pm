@@ -5,11 +5,11 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = 0.03;
+our $VERSION = 0.04;
 
 =head1 NAME
 
-Crypt::OpenSSL::CA - Model of an X509v3 Certification Authority
+Crypt::OpenSSL::CA - The crypto parts of an X509v3 Certification Authority
 
 =head1 SYNOPSIS
 
@@ -22,40 +22,77 @@ Crypt::OpenSSL::CA - Model of an X509v3 Certification Authority
 
     my $privkey = Crypt::OpenSSL::CA::PrivateKey
          ->parse($pem_private_key, -password => "secret");
+    my $pubkey = $privkey->get_public_key;
+
+    my $x509 = Crypt::OpenSSL::CA::X509->new($pubkey);
+    $x509->set_serial("0xdeadbeef");
+    $x509->set_subject_DN($dn);
+    $x509->set_issuer_DN($dn);
+    $x509->set_extension("basicConstraints", "CA:TRUE",
+                         -critical => 1);
+    $x509->set_extension("subjectKeyIdentifier",
+                         $pubkey->get_openssl_keyid);
+    $x509->set_extension("authorityKeyIdentifier_keyid",
+                         $pubkey->get_openssl_keyid);
+    my $pem = $x509->sign($privkey, "sha1");
 
 =for My::Tests::Below "synopsis" end
 
 =head1 DESCRIPTION
 
-This package performs the cryptographic operations necessary to issue
+This module performs the cryptographic operations necessary to issue
 X509 certificates and certificate revocation lists (CRLs).  It is
 implemented as a Perl wrapper around the popular OpenSSL library.
 
+I<Crypt::OpenSSL::CA> is an essential building block to create an
+X509v3 B<Certification Authority> or CA, a crucial part of an X509
+Public Key Infrastructure (PKI). A CA is defined by RFC4210 and
+friends (see L<Crypt::OpenSSL::CA::Resources>) as a piece of software
+that can (among other things) issue and revoke X509v3 certificates.
+To perform the necessary cryptographic operations, it needs a private
+key that is kept secret (currently only RSA is supported).
+
 Despite the name and unlike the C<openssl ca> command-line tool,
 I<Crypt::OpenSSL::CA> is not designed as a full-fledged X509v3
-Certification Authority (CA): some key features are missing, most
-notably persistence (e.g. to remember issued and revoked certificates
-from one call off L</sign_crl> to the next) and security-policy based
-screening of certificate requests.  This is deliberate: OpenSSL's
-features such as configuration file parsing, that are best implemented
-in Perl, have been left out of I<Crypt::OpenSSL::CA> for maximum
-flexibility.
+Certification Authority (CA) in and of itself: some key features are
+missing, most notably persistence (e.g. to remember issued and revoked
+certificates between two CRL issuances) and security-policy based
+screening of certificate requests.  I<Crypt::OpenSSL::CA> mostly does
+``just the crypto'', and this is deliberate: OpenSSL's features such
+as configuration file parsing, that are best implemented in Perl, have
+been left out for maximum flexibility.
 
-To recap, I<Crypt::OpenSSL::CA> only does the crypto part of the work
-of an X509v3 CA, and it does so using mostly OpenSSL and XS glue code.
+=head2 API Overview
 
-=head2 Theory of operation
+The crypto in I<Crypt::OpenSSL::CA> is implemented using the OpenSSL
+cryptographic library, which is lifted to Perl thanks to a bunch of
+glue code in C and a lot of magic in L<Inline::C> and
+L<Crypt::OpenSSL::CA::Inline::C>.
 
-An X509v3 Certification Authority, a crucial part of an X509 Public
-Key Infrastructure (PKI), is defined by RFC4210 and friends (see
-L<Crypt::OpenSSL::CA::Resources>) as a piece of software that can
-(among other things) issue and revoke X509v3 certificates.  To perform
-the necessary cryptographic operations, it needs a private key
-(currently only RSA is supported).
+Most of said glue code is accessible as class and instance methods in
+the ancillary classes such as L</Crypt::OpenSSL::CA::X509> and
+L</Crypt::OpenSSL::CA::X509_CRL>, not in the parent
+I<Crypt::OpenSSL::CA> namespace.  Each of these classes wrap around
+OpenSSL's ``object class'' with the same name
+(e.g. L</Crypt::OpenSSL::CA::X509_NAME> corresponds to the
+C<X509_NAME_foo> functions in C<libcrypto.so>).  OpenSSL concepts are
+therefore made available in an elegant object-oriented API; moreover,
+they are subjugated to Perl's automatic garbage collection, which
+allows the programmer to stop worrying about that.  Additionally,
+I<Crypt::OpenSSL::CA> provides some glue in Perl too, which is mostly
+syntactic sugar to get a more Perlish API out of the C in OpenSSL.
+
+Note that the OpenSSL-wrapping classes don't strive for completeness
+of the exposed API in the least; rather, they export just enough
+features to make them simultaneously testable and useful for the
+purpose of issuing X509 certificates and CRLs.  In particular,
+I<Crypt::OpenSSL::CA> is not so good at parsing already-existing
+cryptographic artifacts (However, L</PATCHES WELCOME>, plus there are
+other modules on the CPAN that already do that.)
 
 =head2 Error Management
 
-All functions and methods in this module, including XS code, throws
+All functions and methods in this module, including XS code, throw
 exceptions as if by L<perlfunc/die> if anything goes wrong.  The
 resulting exception is either a plain string (in case of memory
 exhaustion problems, incorrect arguments, and so on) or an exception
@@ -73,117 +110,10 @@ structure:
   }
 
 where C<$message> is a message by I<Crypt::OpenSSL::CA> and the
-C<-openssl> list is the contents of OpenSSL's error stack when the
-exception was raised.
+C<-openssl> list is the contents of OpenSSL's error stack at the time
+when the exception was raised.
 
 =begin internals
-
-See also L</_sslcroak_callback>.
-
-=end internals
-
-=head1 CONSTRUCTOR AND METHODS
-
-=over
-
-=item I<new(-arg1 => $val1, ...)>
-
-Object constructor. Available named arguments are:
-
-=over
-
-=item I<< -certificate => $pem_string >>
-
-The X509 certificate (as a PEM string) that represents this CA in the
-PKIX certification graph.  The public key inside $x509obj must match
-the I<-key> parameter.  (For the record, I<Crypt::OpenSSL::CA> uses
-the certificate only to get at the values of issuer-related fields in
-the X509v3 structure of the certificates it creates, e.g. the issuer
-DN and key ID)
-
-=item I<< -key => $rsaobj >>
-
-The private key to operate this CA, as a PEM string. Only RSA is
-supported for now.
-
-=item I<< -key_password => $pass >> (optional)
-
-The password to decrypt the I<< -key >> argument with.  If none is
-specified, the key is assumed to be in plain text.
-
-Engine-backed private keys are not supported right now, see L</TODO>.
-
-=back
-
-=cut
-
-sub new { die "UNIMPLEMENTED"; }
-
-=item I<sign_certificate(-arg1 => $val1, ...)>
-
-Certifies (creates) a new L<Crypt::X509> certificate and returns it
-as a PEM string.  Available named arguments are:
-
-=over
-
-=item I<< -serial => $int >>
-
-=item I<< -serial => "0x1234" >>
-
-=item I<< -serial => $Math_BigInt >>
-
-The serial number to use, either as a Perl integer, a hex string
-starting with C<qr/^.x/>, or as a L<Math::BigInt> object.
-
-=back
-
-More X509 certificate extensions will be supported in the
-future.  Patches welcome.
-
-=item I<sign_crl(\@list_of_revocations, %named_options)>
-
-Issues a new Certificate Revocation List and returns it as a PEM
-string.  B<DESIGNME>: contents of \@list_of_revocations.
-
-Available named options are:
-
-=over
-
-=item I<< -validity => $validity_period_in_seconds >>
-
-The validity period to use for this CRL. Default is 7 days.
-
-=back
-
-=cut
-
-=item I<set_current_time($time)>
-
-=item I<set_current_time(undef)>
-
-Sets this I<Crypt::OpenSSL::CA>'s idea of what time it is to $time, an
-integer number of seconds in UNIX epoch format. If undef (the
-default), the current system time is used.  By default, certificates
-and CRLs will be marked as valid starting from this point of time.
-
-=cut
-
-sub set_current_time { die "UNIMPLEMENTED" }
-
-=back
-
-=begin internals
-
-=head2 C glue code
-
-The crypto in I<Crypt::OpenSSL::CA> is implemented using the OpenSSL
-cryptographic library, which is lifted to Perl XS subs thanks to a
-bunch of glue code in C and a lot of magic in
-L<Crypt::OpenSSL::CA::Inline::C>.  Most of said glue code is
-accessible as class and instance methods in the ancillary classes
-described in L</ANCILLARY CLASSES THAT MAP OPENSSL CONCEPTS>.
-
-=head2 Internal methods
 
 =over
 
@@ -227,41 +157,28 @@ sub _sslcroak_callback {
     }
 }
 
+=item I<Crypt::OpenSSL::CA::Error::stringify>
 
-=item I<_get_current_time()>
-
-Returns the (assumed or real) current system time, in UNIX epoch
-format.  See L</set_current_time> for how to lie to oneself about what
-time it is.
+String overload for displaying error messages in a friendly manner.
+See L</Error management>.
 
 =cut
 
-sub _get_current_time { die "UNIMPLEMENTED"; }
+{
+    package Crypt::OpenSSL::CA::Error;
+    use overload '""' => \&stringify;
 
-=back
+    sub stringify {
+        my ($E) = @_;
+        return join("\n",
+                    "Crypt::OpenSSL::CA: error: " . $E->{-message},
+                    @{$E->{-openssl} || []});
+    }
+}
 
 =end internals
 
-=head1 ANCILLARY CLASSES THAT MAP OPENSSL CONCEPTS
-
-Most of the functionality in I<Crypt::OpenSSL::CA> is provided by
-ancillary classes, implemented in XS, that each wrap around OpenSSL's
-"object class" with the same name
-(e.g. L</Crypt::OpenSSL::CA::X509_NAME> corresponds to the
-C<X509_NAME_foo> functions in libcrypto.so).  OpenSSL concepts are
-therefore made available in an elegant object-oriented API; moreover,
-they are subjugated to Perl's automatic garbage collection, which
-allows the programmer to stop worrying about that.  The downside is
-that this API looks like C, meaning that it is inhomogenous and quirky
-at places.
-
-Note that those ancillary OpenSSL-wrapping classes don't strive for
-completeness of the exposed API in the least; rather, they export just
-enough features to make them simultaneously testable and useful to the
-main I<Crypt::OpenSSL::CA> class.  (However, please email the author
-if you think that these classes lack functionnality.)
-
-=head2 Crypt::OpenSSL::CA::X509_NAME
+=head1 Crypt::OpenSSL::CA::X509_NAME
 
 This Perl class wraps around the X509_NAME_* functions of OpenSSL,
 that deal with X500 DNs.  Unlike OpenSSL's X509_NAME,
@@ -273,8 +190,10 @@ constructor can alter them.
 =cut
 
 package Crypt::OpenSSL::CA::X509_NAME;
+use Carp qw(croak);
+use utf8 ();
 
-=item I<new($dnkey1, $dnval1, ...)>
+=item I<new_utf8($dnkey1, $dnval1, ...)>
 
 Constructs and returns a new I<Crypt::OpenSSL::CA::X509_NAME> object;
 implemented in terms of B<X509_NAME_add_entry_by_txt(3)>.  The RDN
@@ -291,16 +210,54 @@ is not allowed), long names with the proper case
 Values are interpreted as strings.  Certain keys (especially
 C<countryName>) limit the range of acceptable values.
 
-I<new> supports UTF-8 DN values just fine, and will encode them using
-the heuristics recommended by the L<Crypt::OpenSSL::CA::Resources/X509
-Style Guide>: namely, by selecting the ``least wizz-bang'' character
-set that will accomodate the data actually passed.
+All DN values will be converted to UTF-8 if needed, and the returned
+DN string encodes all its RDN components as C<UTF8String>s regardless
+of their value, as mandated by RFC3280 section 4.1.2.4.  This may pose
+a risk for compatibility with buggy, uh, I mean, proprietary software;
+consider using I<new()> instead of I<new_utf8()>.
 
-I<new> does not support multiple AVAs in a single RDN.  If you don't
-understand this sentence, consider yourself a lucky programmer.
+I<new_utf8> does not support multiple AVAs in a single RDN.  If you
+don't understand this sentence, consider yourself a lucky programmer.
 
 See also L</get_subject_DN> for an alternative way of constructing
 instances of this class.
+
+=item I<new($dnkey1, $dnval1, ...)>
+
+Constructs a DN in just the same way as L</new_utf8>, except that the
+resulting DN will be encoded using the heuristics recommended by the
+L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>: namely, by
+selecting the ``least wizz-bang'' character set that will accomodate
+the data actually passed.  Note that this behavior runs afoul of
+RFC3280 section 4.1.2.4, which instates december 31, 2003 as a flag
+day after which all certificates should be unconditionally encoded as
+UTF-8; use L</new_utf8> if you prefer RFC compliance over making
+proprietary software work.
+
+=cut
+
+sub new_utf8 {
+    my ($class, @args) = @_;
+    croak("odd number of arguments required") if @args % 2;
+
+    my $self = $class->_new;
+    while(my ($k, $v) = splice(@args, 0, 2)) {
+        utf8::upgrade($v);
+        $self->_add_RDN_utf8($k, $v);
+    }
+    return $self;
+}
+
+sub new {
+    my ($class, @args) = @_;
+    croak("odd number of arguments required") if @args % 2;
+
+    my $self = $class->_new;
+    while(my ($k, $v) = splice(@args, 0, 2)) {
+        $self->_add_RDN_best_encoding($k, $v);
+    }
+    return $self;
+}
 
 =item I<to_string()>
 
@@ -320,37 +277,55 @@ bytes.
 use Crypt::OpenSSL::CA::Inline::C <<"X509_NAME_CODE";
 #include <openssl/x509.h>
 
+/* In order to share code between L</new> and L</new_utf8>, I had to
+   make the class mutable internally. */
 static
-SV* new(char* class, ...) {
-    Inline_Stack_Vars;
-    int i=0;
-
+SV* _new(char* class) {
     X509_NAME *retval = X509_NAME_new();
     if (!retval) { croak("not enough memory for X509_NAME_new"); }
-
-    if (! (Inline_Stack_Items % 2)) {
-       croak("odd number of arguments required");
-    }
-
-    for(i=1; i<Inline_Stack_Items; i += 2) {
-        SV* perl_key; SV* perl_val;
-        char* key; char* val;
-
-        perl_key = Inline_Stack_Item(i);
-        perl_val = Inline_Stack_Item(i+1);
-        key = char0_value(perl_key);
-        val = char0_value(perl_val);
-        if (! X509_NAME_add_entry_by_txt
-                      (retval, key,
-                      (SvUTF8(perl_val) ? MBSTRING_UTF8 : MBSTRING_ASC),
-                      (unsigned char*) val, -1, -1, 0)) {
-             if (retval) { X509_NAME_free(retval); }
-             sslcroak("X509_NAME_add_entry_by_txt"
-                      " failed at argument %d", i);
-        }
-    }
-
     return perl_wrap("${\__PACKAGE__}", retval);
+}
+
+static
+void _add_RDN_best_encoding(SV* sv_self, SV* sv_key, SV* sv_val) {
+    X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, sv_self);
+    char* key = char0_value(sv_key);
+    char* val = char0_value(sv_val);
+    if (! X509_NAME_add_entry_by_txt
+                  (self, key,
+                  (SvUTF8(sv_val) ? MBSTRING_UTF8 : MBSTRING_ASC),
+                  (unsigned char*) val, -1, -1, 0)) {
+         sslcroak("X509_NAME_add_entry_by_txt failed for %s=%s", key, val);
+    }
+}
+
+static
+void _add_RDN_utf8(SV* sv_self, SV* sv_key, SV* sv_val) {
+    X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, sv_self);
+    char* key = char0_value(sv_key);
+    char* val = char0_value(sv_val);
+    X509_NAME_ENTRY* tmpentry;
+
+    if (! SvUTF8(sv_val)) {
+        croak("Expected UTF8-encoded value");
+    }
+
+    /* use X509_NAME_ENTRY_create_by_txt to validate the contents of the
+       field first, because as documented in
+       X509_NAME_add_entry_by_txt(3ssl) there will be no such checks
+       when using V_ASN1_UTF8STRING: */
+    if (! (tmpentry = X509_NAME_ENTRY_create_by_txt
+               (NULL, key, MBSTRING_UTF8,  (unsigned char*) val, -1)) ) {
+         sslcroak("X509_NAME_ENTRY_create_by_txt failed for %s=%s",
+                  key, val);
+    }
+    X509_NAME_ENTRY_free(tmpentry);
+
+    if (! X509_NAME_add_entry_by_txt
+                  (self, key, V_ASN1_UTF8STRING,
+                  (unsigned char*) val, -1, -1, 0)) {
+         sslcroak("X509_NAME_add_entry_by_txt failed for %s=%s", key, val);
+    }
 }
 
 static
@@ -381,7 +356,7 @@ X509_NAME_CODE
 
 =back
 
-=head2 Crypt::OpenSSL::CA::PublicKey
+=head1 Crypt::OpenSSL::CA::PublicKey
 
 This Perl class wraps around the public key abstraction of OpenSSL.
 I<Crypt::OpenSSL::CA::PublicKey> objects are immutable.
@@ -653,7 +628,7 @@ PUBLICKEY_CODE
 
 =back
 
-=head2 Crypt::OpenSSL::CA::PrivateKey
+=head1 Crypt::OpenSSL::CA::PrivateKey
 
 This Perl class wraps around the private key abstraction of OpenSSL.
 I<Crypt::OpenSSL::CA::PrivateKey> objects are immutable.
@@ -708,14 +683,11 @@ as undef.
 
 =end internals
 
-=item I<get_RSA_modulus()>
+=item I<get_public_key()>
 
-Returns the modulus of this I<Crypt::OpenSSL::CA::PrivateKey>
-instance, assuming that it is an RSA key (the only kind of private key
-supported by I<Crypt::OpenSSL::CA> for the time being).  This is
-similar to the output of C<openssl rsa -modulus>, except that the
-leading C<Modulus=> identifier is trimmed and the returned string is
-not newline-terminated.
+Returns the public key associated with this
+I<Crypt::OpenSSL::CA::PrivateKey> instance, as an
+L</Crypt::OpenSSL::CA::PublicKey> object.
 
 =cut
 
@@ -789,28 +761,26 @@ SV* _parse(char *class, const char* pemkey, SV* svpass,
 }
 
 static
-SV* get_RSA_modulus(SV* obj) {
+SV* get_public_key(SV* obj) {
     EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj);
-    RSA* rsa;
-    BIO* mem;
-    SV* retval;
-    int printstatus;
+    EVP_PKEY* retval = NULL;
+    unsigned char* asn1buf = NULL;
+    const unsigned char* asn1buf_copy;
+    int size;
 
-    if (! (rsa = EVP_PKEY_get1_RSA(self))) { croak("Not an RSA key"); }
+    /* This calling idiom requires OpenSSL 0.9.7 */
+    size = i2d_PUBKEY(self, &asn1buf);
+    if (size < 0) { sslcroak("i2d_PUBKEY failed"); }
 
-    if (! (mem = BIO_new(BIO_s_mem()))) {
-          RSA_free(rsa);
-          croak("Cannot allocate BIO");
+    /* d2i_PUBKEY advances the pointer that is passed to it,
+       so we need to make a copy: */
+    asn1buf_copy = asn1buf;
+    d2i_PUBKEY(&retval, &asn1buf_copy, size);
+    OPENSSL_free(asn1buf);
+    if (! retval) {
+        sslcroak("d2i_PUBKEY failed");
     }
-
-    printstatus = BN_print(mem, rsa->n) && BIO_write(mem, "\\0", 1);
-    RSA_free(rsa);
-    if (! printstatus) {
-        BIO_free(mem);
-        sslcroak("Serializing RSA modulus failed");
-    }
-
-    return BIO_mem_to_SV(mem);
+    return perl_wrap("Crypt::OpenSSL::CA::PublicKey", retval);
 }
 
 static
@@ -820,9 +790,24 @@ void DESTROY(SV* obj) {
 
 PRIVATEKEY_CODE
 
+=begin OBSOLETE
+
+=item I<get_RSA_modulus()>
+
+For compatibility with 0.03. Use ->get_public_key->get_RSA_modulus
+instead.
+
+=end OBSOLETE
+
+=cut
+
+sub get_RSA_modulus { shift->get_public_key->get_RSA_modulus }
+
 =back
 
-=head2 Crypt::OpenSSL::CA::ENGINE (B<UNIMPLEMENTED>)
+=begin UNIMPLEMENTED
+
+=head1 Crypt::OpenSSL::CA::ENGINE
 
 This package models the C<ENGINE_*> functions of OpenSSL.
 
@@ -891,9 +876,11 @@ ENGINE_CODE
 
 =back
 
+=end UNIMPLEMENTED
+
 =begin internals
 
-=head2 Crypt::OpenSSL::CA::CONF
+=head1 Crypt::OpenSSL::CA::CONF
 
 A wrapper around an OpenSSL C<CONF *> data structure that contains the
 OpenSSL configuration data.  Used by L</add_extension> and friends.
@@ -909,10 +896,10 @@ package Crypt::OpenSSL::CA::CONF;
 
 =item I<new($confighash)>
 
-Creates the configuration file data structure.  The gnparameter is a
-reference to a hash of hashes; the first-level keys are section names,
-and the second-level keys are parameter names.  Returns an immutable
-object of class I<Crypt::OpenSSL::CA::CONF>.
+Creates the configuration file data structure.  C<$confighash>
+parameter is a reference to a hash of hashes; the first-level keys are
+section names, and the second-level keys are parameter names.  Returns
+an immutable object of class I<Crypt::OpenSSL::CA::CONF>.
 
 =item I<get_string($section, $key)>
 
@@ -1027,16 +1014,16 @@ CONF_CODE
 
 =back
 
-=head2 Crypt::OpenSSL::CA::X509V3_EXT
+=head1 Crypt::OpenSSL::CA::X509V3_EXT
 
 Instances of this class model OpenSSL's C<X509V3_EXT *> extensions
-just before they get added to a certificate by L</add_extension>.
-They are immutable.
+just before they get added to a certificate or a CRL by
+L</add_extension>.  They are immutable.
 
 Like L</Crypt::OpenSSL::CA::CONF>, this POD section is not made
 visible in the man pages (for now), as L</add_extension> totally
-shadows the use of this class.  Furthermore, the API of this class is
-just gross from a Perl's hacker point of view.  Granted, the only
+shadows the use of this class.  Furthermore, the API of this class
+just stinks from a Perl's hacker point of view.  Granted, the only
 point of this class is to have several constructors, so as to
 introduce polymorphism into ->_do_add_extension without overflowing
 its argument list in an even more inelegant fashion.
@@ -1062,15 +1049,22 @@ this extension (e.g. "critical;CA:FALSE").  $CONF is an instance of
 L</Crypt::OpenSSL::CA::CONF> that provides additional configuration
 for complex X509v3 extensions.
 
+If we are creating an extension for a certificate (as opposed to an
+extension for a CRL), $X509 should be the instance of
+L</Crypt::OpenSSL::CA::X509>, that we'll be adding the extension to:
+we need it as part of the C<X509V3_CTX>, e.g. to resolve constructs
+such as C<< ->add_extension(subjectKeyIdentifier => "hash") >>.
+
 =item I<new_authorityKeyIdentifier_keyid($keyid)>
 
 Creates an returns an X509V3 authorityKeyIdentifier extension
 utilizing only the C<keyIdentifier> production of RFC3280 section
 4.2.1.1, with the value set to $keyid, a string of colon-separated
 pairs of uppercase hex digits typically obtained using
-L</get_openssl_keyid>.  Optionally $keyid may be prefixed with the
-string "critical,", just like $value in
-L</new_from_X509V3_EXT_METHOD>.
+L</get_subject_keyid> or L</get_openssl_keyid>.  Optionally $keyid may
+be prefixed with the string "critical,", just like $value in
+L</new_from_X509V3_EXT_METHOD>.  This extension is adequate both for
+certificates and CRLs.
 
 Oddly enough, such a construct is not possible using
 L</new_from_X509V3_EXT_METHOD>: OpenSSL does not support storing a
@@ -1082,8 +1076,25 @@ certificate at hand).
 Also note that identifying the authority key by issuer name and serial
 number (the other option discussed in RFC3280 section 4.2.1.1) is
 frowned upon in L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>, and
-therefore not yet supported by I<Crypt::OpenSSL::CA> (patches welcome
-though).
+therefore not yet supported by I<Crypt::OpenSSL::CA> (L</PATCHES
+WELCOME> though).
+
+=item I<new_CRL_serial($critical, $oid, $serial)>
+
+This constructor implements the C<crlNumber> and C<deltaCRLIndicator>
+CRL extensions as described in L</Crypt::OpenSSL::CA::X509_CRL>.
+$critical is the criticality flag, as integer (to be interpreted as a
+Boolean).  $oid is the extension's OID, as a dot-separated sequence of
+decimal integers.  $serial is a serial number with the same syntax as
+described in L</set_serial>.
+
+=item I<new_freshestCRL($value, $CONF)>
+
+This constructor implements the C<freshestCRL> CRL extension, as
+described in L</Crypt::OpenSSL::CA::X509_CRL>. The parameters
+C<$value> and C<$CONF> work the same as in
+L</new_from_X509V3_EXT_METHOD>, including the criticality-in-$value
+trick.
 
 =cut
 
@@ -1097,8 +1108,11 @@ SV* new_from_X509V3_EXT_METHOD(SV* class,
     X509_EXTENSION* self;
     CONF* config = perl_unwrap("Crypt::OpenSSL::CA::CONF",
                                 CONF *, sv_config);
-    X509* x509 = perl_unwrap("Crypt::OpenSSL::CA::X509",
-                                X509 *, sv_x509);
+    X509* x509 = NULL;
+
+    if (SvOK(sv_x509)) {
+        x509 = perl_unwrap("Crypt::OpenSSL::CA::X509", X509 *, sv_x509);
+    }
 
     if (! nid) { croak("Unknown extension specified"); }
     if (! value) { croak("No value specified"); }
@@ -1155,6 +1169,56 @@ SV* new_authorityKeyIdentifier_keyid(SV* class, char* keyid) {
     return perl_wrap("${\__PACKAGE__}", self);
 }
 
+static
+SV* new_CRL_serial(char* class, int critical, char* oidtxt, char* value) {
+    int nid;
+    X509_EXTENSION* self;
+    ASN1_INTEGER* serial;
+
+    /* Oddly enough, the NIDs for crlNumber and deltaCRLIndicator are
+       known to OpenSSL as of 2004 (if the copyright header of
+       crypto/x509v3/v3_int.c is to be trusted), and there is support
+       in "openssl ca" for emitting CRL numbers (as mandated by
+       RFC3280); yet these extensions still aren't fully integrated
+       with the CONF stuff. */
+    if (! strcmp(oidtxt, "2.5.29.20")) { /* crlNumber */
+        nid = NID_crl_number;
+    } else if (! strcmp(oidtxt, "2.5.29.27")) { /* deltaCRLIndicator */
+        nid = NID_delta_crl;
+    } else {
+        croak("Unknown serial-like CRL extension %s", oidtxt);
+    }
+
+    serial = parse_serial_or_croak(value);
+    self = X509V3_EXT_i2d(nid, critical, serial);
+    ASN1_INTEGER_free(serial);
+    if (! self) { sslcroak("X509V3_EXT_i2d failed"); }
+    return perl_wrap("${\__PACKAGE__}", self);
+}
+
+static
+SV* new_freshestCRL(char* class, char* value, SV* sv_config) {
+    X509V3_CTX ctx;
+    X509_EXTENSION* self;
+    CONF* config = perl_unwrap("Crypt::OpenSSL::CA::CONF",
+                                CONF *, sv_config);
+    static int nid_freshest_crl = 0;
+
+    if (! value) { croak("No value specified"); }
+
+    if (! nid_freshest_crl) {
+        nid_freshest_crl = OBJ_create("2.5.29.46", "freshestCRL",
+                                      "Delta CRL distribution points");
+    }
+
+    X509V3_set_ctx(&ctx, NULL, NULL, NULL, NULL, 0);
+    X509V3_set_nconf(&ctx, config);
+    self = X509V3_EXT_nconf_nid
+             (config, &ctx, NID_crl_distribution_points, value);
+    if (!self) { sslcroak("X509V3_EXT_conf_nid failed"); }
+    self->object = OBJ_nid2obj(nid_freshest_crl);
+    return perl_wrap("${\__PACKAGE__}", self);
+}
 
 static
 void DESTROY(SV* sv_self) {
@@ -1168,7 +1232,7 @@ X509V3_EXT_CODE
 
 =end internals
 
-=head2 Crypt::OpenSSL::CA::X509
+=head1 Crypt::OpenSSL::CA::X509
 
 This Perl class wraps around the X509 certificate creation routines of
 OpenSSL.  I<Crypt::OpenSSL::CA::X509> objects are mutable; they
@@ -1198,9 +1262,8 @@ use Carp qw(croak);
 
 =head3 Support for OpenSSL-style extensions
 
-L</set_extension>, L</add_extension>, L</set_complex_extension> and
-L</add_complex_extension> work with OpenSSL's I<X509V3_EXT_METHOD>
-mechanism, which is summarily described in
+L</set_extension> and L</add_extension> work with OpenSSL's
+I<X509V3_EXT_METHOD> mechanism, which is summarily described in
 L<Crypt::OpenSSL::CA::Resources/openssl.txt>.  This means that most
 X509v3 extensions that can be set through OpenSSL's configuration file
 can be passed to this module as Perl strings in exactly the same way;
@@ -1236,8 +1299,8 @@ CA's public key.
 On a related matter, identifying the authority key by issuer name and
 serial number, an option that is discussed in RFC3280 section 4.2.1.1,
 is frowned upon in L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>,
-and therefore not yet supported by I<Crypt::OpenSSL::CA>.  Patches
-welcome though.
+and therefore not yet supported by I<Crypt::OpenSSL::CA>.  L</PATCHES
+WELCOME> though.
 
 =head3 Constructors and Methods
 
@@ -1264,16 +1327,16 @@ Despite this, the returned object can be L</sign>ed anew if one wants.
 Returns an instance of L</Crypt::OpenSSL::CA::PublicKey> that
 corresponds to the RSA or DSA public key in this certificate.
 Memory-management wise, this performs a copy of the underlying
-C<EVP_PKEY *> structure; therefore there is no danger in destroying
-this certificate object and keeping only the returned public key.
+C<EVP_PKEY *> structure; therefore it is safe to destroy this
+certificate object afterwards and keep only the returned public key.
 
 =item I<get_subject_DN()>
 
 Returns the subject DN of this I<Crypt::OpenSSL::CA::X509> instance,
 as an L</Crypt::OpenSSL::CA::X509_NAME> instance.  Memory-management
 wise, this performs a copy of the underlying C<X509_NAME *> structure;
-therefore there is no danger in destroying this certificate object and
-keeping only the returned DN.
+therefore there it is safe to destroy this certificate object
+afterwards and keep only the returned DN.
 
 =item I<get_subject_keyid()>
 
@@ -1283,10 +1346,10 @@ such extension is available, returns undef.  Depending on the whims of
 the particular CA that signed this certificate, this may or may not be
 the same as C<< $self->get_public_key->get_openssl_keyid >>.
 
-=item I<set_serial_hex($serial_hexstring)>
+=item I<set_serial($serial_hexstring)>
 
 Sets the serial number to C<$serial_hexstring>, which must be a scalar
-containing an unadorned, lowercase, hexadecimal string.
+containing a lowercase, hexadecimal string that starts with "0x".
 
 =item I<set_subject_DN($dn_object)>
 
@@ -1302,14 +1365,6 @@ objects.
 Sets the validity period of the certificate.  The dates must be in the
 GMT timezone, with the format yyyymmddhhmmssZ (it's a literal Z at the
 end, meaning "Zulu" in case you care).
-
-=item I<extension_by_name($extname)>
-
-Returns true if and only if $extname is a valid X509v3 certificate
-extension, susceptible of being passed to L</set_extension> and
-friends.  Specifically, returns the OpenSSL NID associated with
-$extname, as an integer.  Can be invoked either as an instance method
-or as a class method.
 
 =item I<set_extension($extname, $value, %options, %more_openssl_config)>
 
@@ -1446,22 +1501,6 @@ sub add_extension {
 
 Removes any and all extensions named $extname in this certificate.
 
-Sets the authority key identifier extension to $keyid, using RFC3280's
-C<keyIdentifier> production in section 4.2.1.1.  Note that
-I<set_authority_keyid> is B<not> a sub-feature of L</set_extension>
-because, oddly enough, OpenSSL does not support storing a literal
-value in the configuration file for C<authorityKeyIdentifier> (it only
-supports copying same from the CA certificate, whereas we don't want
-to insist on the caller providing one).
-
-Also 
-
-=cut
-
-sub set_authority_keyid {
-    die "UNIMPLEMENTED";
-}
-
 =begin internals
 
 =item I<_do_add_extension($extension)>
@@ -1496,7 +1535,7 @@ use Crypt::OpenSSL::CA::Inline::C <<"X509_CODE";
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <openssl/evp.h> /* For EVP_get_digestbyname() */
-#include <openssl/bn.h>  /* For BN_hex2bn in set_serial_hex() */
+#include <openssl/bn.h>  /* For BN_hex2bn in set_serial() */
 
 static
 SV* new(char* class, SV* sv_pubkey) {
@@ -1590,6 +1629,21 @@ SV* get_subject_keyid(SV* sv_self) {
 }
 
 static
+void set_serial(SV* obj, char* serial_hexstring) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    ASN1_INTEGER* serial_asn1;
+    int status;
+
+    serial_asn1 = parse_serial_or_croak(serial_hexstring);
+    status = X509_set_serialNumber(self, serial_asn1);
+    ASN1_INTEGER_free(serial_asn1);
+    if (! status) { sslcroak("X509_set_serialNumber failed"); }
+}
+
+/* DEPRECATED because set_serial_hex lacks the ability to evolve
+   to support other serial number formats in the future. Use
+   L</set_serial> instead with a 0x prefix.  */
+static
 void set_serial_hex(SV* obj, char* serial_hexstring) {
     X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
     ASN1_INTEGER* serial_asn1;
@@ -1625,40 +1679,20 @@ void set_issuer_DN(SV* obj, SV* dn_object) {
     }
 }
 
-/* RFC3280, section 4.1.2.5 */
-#define RFC3280_cutoff_date "20500000" "000000"
-static void set_validity(ASN1_TIME* t, char* date) {
-    int status;
-    int is_generalizedtime;
-
-    if (strlen(date) != strlen(RFC3280_cutoff_date) + 1) {
-         croak("Wrong date length");
-    }
-    if (date[strlen(RFC3280_cutoff_date)] != 'Z') {
-         croak("Wrong date format");
-    }
-
-    is_generalizedtime = (strcmp(date, RFC3280_cutoff_date) > 0);
-    if (! (is_generalizedtime ?
-           ASN1_GENERALIZEDTIME_set_string(t, date) :
-           ASN1_UTCTIME_set_string(t, date + 2)) ) {
-        croak("%s failed: bad date format (%s)",
-              (is_generalizedtime ? "ASN1_GENERALIZEDTIME_set_string" :
-               "ASN1_UTCTIME_set_string"), date);
-    }
-}
-
-
 static
 void set_notBefore(SV* obj, char* startdate) {
     X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    return set_validity(X509_get_notBefore(self), startdate);
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(startdate);
+    X509_set_notBefore(self, time);
+    ASN1_TIME_free(time);
 }
 
 static
 void set_notAfter(SV* obj, char* enddate) {
     X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    return set_validity(X509_get_notAfter(self), enddate);
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(enddate);
+    X509_set_notAfter(self, time);
+    ASN1_TIME_free(time);
 }
 
 /* This one is callable from both Perl and C, kewl! */
@@ -1685,7 +1719,6 @@ int extension_by_name(SV* unused, char* extname) {
 
 static
 void _do_add_extension(SV* obj, SV* sv_extension) {
-    X509V3_CTX ctx;
     X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
     X509_EXTENSION *ex = perl_unwrap("Crypt::OpenSSL::CA::X509V3_EXT",
                                      X509_EXTENSION *, sv_extension);
@@ -1765,13 +1798,574 @@ X509_CODE
 
 =back
 
+=head1 Crypt::OpenSSL::CA::X509_CRL
+
+This Perl class wraps around OpenSSL's CRL creation features.
+
+=over
+
+=cut
+
+package Crypt::OpenSSL::CA::X509_CRL;
+use Carp qw(croak);
+
+=item I<new()>
+
+=item I<new($version)>
+
+Creates and returns an empty I<Crypt::OpenSSL::CA::X509_CRL> object.
+$version is the CRL version, e.g. C<1> or C<2> or C<CRLv1> or C<CRLv2>
+for idiomatics.  The default is CRLv2, as per RFC3280.  Setting the
+version to 1 will cause I<add_extension()> and L</add_entry> with
+extensions to throw an exception instead of working.
+
+=cut
+
+sub new {
+    my ($class, $version) = @_;
+    $version = "CRLv2" if (! defined $version);
+    unless ($version =~ m/([12])$/) {
+        croak("Incorrect version string $version");
+    }
+    return $class->_new($1 - 1);
+}
+
+=item I<is_crlv2()>
+
+Returns true iff this CRL object was set to CRLv2 at L</new> time.
+
+=item I<set_issuer_DN($dn_object)>
+
+Sets the CRL's issuer name from an L</Crypt::OpenSSL::CA::X509_NAME>
+object.
+
+=item I<set_lastUpdate($enddate)>
+
+=item I<set_nextUpdate($startdate)>
+
+Sets the validity period of the certificate.  The dates must be in the
+GMT timezone, with the format yyyymmddhhmmssZ (it's a literal Z at the
+end, meaning "Zulu" in case you care).
+
+=item I<set_extension($extname, $value, %options, %more_openssl_config)>
+
+=item I<add_extension($extname, $value, %options, %more_openssl_config)>
+
+=item I<remove_extension($extname)>
+
+Manage CRL extensions as per RFC3280 section 5.2. These methods work
+like their respective counterparts in L<Crypt::OpenSSL::CA::X509>.
+Recognized CRL extensions are:
+
+=over
+
+=item I<authorityKeyIdentifier_keyid>
+
+Works the same as in L</Crypt::OpenSSL::CA::X509>. Implements RFC3280
+section 5.2.1.
+
+=item C<crlNumber>
+
+An extension (described in RFC3280 section 5.2.3, and made mandatory
+by section 5.1.2.1) to identify the CRL by a monotonically increasing
+sequence number.  The value of this extension must be a serial number,
+with the same syntax as the first argument to L</set_serial>.
+
+=item C<freshestCRL>
+
+An optional RFC3280 extension that indicates support for delta-CRLs,
+as described by RFC3280 section 5.2.6.  The expected $value and
+%more_openssl_config are the same as for C<cRLDistributionPoints> in
+an extension for certificates (see L</Crypt::OpenSSL::CA::X509>).
+
+=item C<deltaCRLIndicator>
+
+An optional RFC3280 extension that indicates that this CRL is as a
+delta-CRL, pursuant to RFC3280 section 5.2.4.  For this extension,
+$value must be a serial number, with the same syntax as the
+first argument to L</set_serial>.
+
+=back
+
+Note that CRL extensions are B<not> implemented by OpenSSL as of
+version 0.9.8c, but rather by C glue code directly in
+I<Crypt::OpenSSL::CA>.
+
+=cut
+
+sub set_extension {
+    my ($self, $extname, @stuff) = @_;
+    my $real_extname = $extname;
+    $self->remove_extension($real_extname);
+    $self->add_extension($extname, @stuff);
+}
+
+
+use vars qw(%ext2oid %oid2ext);
+# RFC3280 §§ 4.2.1 and 5.2; http://www.alvestrand.no/objectid/2.5.29.html
+%ext2oid = (crlNumber => "2.5.29.20",
+            deltaCRLIndicator => "2.5.29.27",
+            authorityKeyIdentifier_keyid => "2.5.29.35",
+            freshestCRL => "2.5.29.46",
+            );
+%oid2ext = reverse %ext2oid;
+
+sub add_extension {
+    die("incorrect number of arguments to add_extension()")
+        unless (@_ % 2);
+    my ($self, $extname, $value, %options) = @_;
+    croak("add_extension: name is mandatory") unless
+        ($extname && length($extname));
+    croak("add_extension: value is mandatory") unless
+        ($value && length($value));
+
+    my $critical = "";
+    $critical = "critical," if ($value =~ s/^critical(,|$)//i);
+
+    foreach my $k (keys %options) {
+        next unless $k =~ m/^-/;
+        my $v = delete $options{$k};
+
+        if ($k eq "-critical") {
+            if ($v) {
+                $critical = "critical,";
+            } else {
+                croak("add_extension: -critical => 0 conflicts" .
+                      " with ``$_[2]''") if ($critical);
+            }
+        }
+        # Other named options may be added later.
+    }
+
+    my $ext;
+    if ($extname eq "authorityKeyIdentifier_keyid") {
+        $ext = Crypt::OpenSSL::CA::X509V3_EXT->
+            new_authorityKeyIdentifier_keyid("$critical$value");
+    } elsif ($extname eq "freshestCRL") {
+        $ext = Crypt::OpenSSL::CA::X509V3_EXT->
+            new_freshestCRL("$critical$value",
+                            Crypt::OpenSSL::CA::CONF->new(\%options));
+    } elsif (grep { $extname eq $_ } (qw(crlNumber deltaCRLIndicator))) {
+        $ext = Crypt::OpenSSL::CA::X509V3_EXT->
+            new_CRL_serial(($critical ? 1 : 0),
+                           $ext2oid{$extname}, $value);
+    } else {
+        croak("Unknown CRL extension $extname");
+    }
+    $self->_do_add_extension($ext);
+}
+
+sub remove_extension {
+    my ($self, $extname) = @_;
+    my $extoid = $extname;
+    $extoid = $ext2oid{$extoid} if exists $ext2oid{$extoid};
+    croak("Unknown CRL extension: $extname") unless
+        (exists $oid2ext{$extoid});
+    $self->_remove_extension_by_oid($extoid);
+}
+
+=item I<add_entry($serial_hex, $revocationdate, %named_options)>
+
+Adds an entry to the CRL.  $serial_hex is the serial number of the
+certificate to be revoked, as a scalar containing a lowercase,
+hexadecimal string starting with "0x".  $revocationdate is a time in
+"Zulu" format, like in L</set_lastUpdate>.
+
+The following named options provide access to CRLv2 extensions as
+defined in RFC3280 section 5.3:
+
+=over
+
+=item I<< -reason => $reason >>
+
+Sets the revocation reason to $reason, a plain string.  Available
+reasons are C<unspecified> (which is B<not> the same thing as not
+setting a revocation reason at all), C<keyCompromise>,
+C<CACompromise>, C<affiliationChanged>, C<superseded>,
+C<cessationOfOperation>, C<certificateHold> and C<removeFromCRL>.
+
+=item I<< -compromise_time => $time >>
+
+The time at which the compromise is suspected to have taken place,
+which may be earlier than the $revocationdate.  The syntax for $time
+is the same as that for $revocationdate.  Note that this CRL extension
+only makes sense if I<< -reason >> is either I<keyCompromise> or
+I<CACompromise>.
+
+=item I<< -hold_instruction => $oid >>
+
+=item I<< -hold_instruction => $string >>
+
+Sets the hold instruction token to $oid (which is a string containing
+a dot-separated sequence of decimal integers), or $string (one of the
+predefined string constants C<none>, C<callIssuer>, C<reject> and
+C<pickupToken>, case-insensitive).  This option only makes sense if
+the revocation reason is C<certificateHold>.  See also
+L</Crypt::OpenSSL::CA::X509_CRL::holdInstructionNone>,
+L</Crypt::OpenSSL::CA::X509_CRL::holdInstructionCallIssuer>,
+L</Crypt::OpenSSL::CA::X509_CRL::holdInstructionReject> and
+L</Crypt::OpenSSL::CA::X509_CRL::holdInstructionPickupToken>.
+
+=back
+
+All the above options should be specified at most once.  If they are
+specified several times, only the last occurence in the parameter list
+will be taken into account.
+
+The criticality is set according to the recommendations of RFC3280
+section 5.3; practically speaking, all certificate entry extensions
+are noncritical, given that 5.3.4-style C<certificateIssuer> is
+B<UNIMPLEMENTED>.  Support for critical certificate entry extensions
+may be added in a future release of I<Crypt::OpenSSL::CA>.
+
+=cut
+
+sub add_entry {
+    croak("Wrong number of arguments to add_entry") unless @_ % 2;
+    my ($self, $serial_hex, $revocationdate, %named_options) = @_;
+
+    my $reason = do {
+        # RFC3280 section 5.3.1:
+        my @rfc3280_revocation_reasons =
+            qw(unspecified keyCompromise cACompromise
+               affiliationChanged superseded cessationOfOperation
+               certificateHold __UNUSED__ removeFromCRL privilegeWithdrawn
+               aACompromise);
+        my %reason = map { ( $rfc3280_revocation_reasons[$_] => $_ ) }
+            (0..$#rfc3280_revocation_reasons);
+        $reason{$named_options{-reason} || ""};
+    };
+    my $holdinstr = do {
+        local $_ = $named_options{-hold_instruction};
+        if (defined($_)) {
+            if (m/none/i) { $_ = holdInstructionNone(); }
+            elsif (m/callissuer/i) { $_ = holdInstructionCallIssuer(); }
+            elsif (m/reject/i) { $_ = holdInstructionReject(); }
+            elsif (m/pickuptoken/i) { $_ = holdInstructionPickupToken(); }
+            elsif (m/^\d+(\.\d+)*$/) { }  # No transformation
+            else { croak("Unknown hold instruction $_"); }
+        }
+        $_;
+    };
+
+    my $comptime = $named_options{-compromise_time};
+
+    return $self->_do_add_entry
+        ($serial_hex, $revocationdate, $reason, $holdinstr, $comptime);
+}
+
+=item I<sign($privkey, $digestname)>
+
+Signs the CRL.  C<$privkey> is an instance of
+L</Crypt::OpenSSL::CA::PrivateKey>; C<$digestname> is the name of one
+of cryptographic digests supported by OpenSSL, e.g. "sha1" or "sha256"
+(notice that using "md5" is B<strongly discouraged> due to security
+considerations; see
+L<http://www.win.tue.nl/~bdeweger/CollidingCertificates/>).  Returns
+the PEM-encoded CRL as a string.
+
+=begin internals
+
+=item I<_new($x509_crl_version)>
+
+Does the actual job of L</new>.  $x509_crl_version must be an integer,
+0 for CRLv1 and 1 for CRLv2.
+
+=item I<_do_add_extension($extension)>
+
+Does the actual job of L</add_extension>, sans all the syntactic
+sugar. $extension is an instance of
+L</Crypt::OpenSSL::CA::X509V3_EXT>.
+
+=item I<_do_add_entry($serial, $date, $reason_code, $hold_instr,
+                      $compromise_time)>
+
+Does the actual job of L</add_entry>, sans all the syntactic sugar.
+All arguments are strings, except $reason_code which is an integer
+according to the enumeration set forth in RFC3280 section 5.3.1.
+$reason_code, $hold_instr and $compromise_time can be omitted (that
+is, passed as undef).
+
+This already ugly API will of course have to "evolve" as we implement
+more CRL entry extensions.
+
+=item I<_remove_extension_by_oid($oid_text)>
+
+Like L</remove_extension>, except that the parameter is an ASN.1
+Object Identifier in dotted-decimal form (e.g. "2.5.29.20" instead of
+C<cRLNumber>).
+
+=end internals
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"X509_CRL_CODE";
+#include <openssl/pem.h>
+#include <openssl/bio.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+static
+SV* _new(char *class, int x509_crl_version) {
+    X509_CRL* retval = X509_CRL_new();
+
+    if (! retval) {
+        croak("X509_CRL_new failed");
+    }
+    if (! X509_CRL_set_version(retval, x509_crl_version)) {
+        X509_CRL_free(retval);
+        sslcroak("X509_CRL_set_version failed");
+    }
+
+    return perl_wrap("${\__PACKAGE__}", retval);
+}
+
+static
+int is_crlv2(SV* sv_self) {
+    return X509_CRL_get_version
+       (perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self));
+}
+
+static
+void set_issuer_DN(SV* sv_self, SV* sv_dn) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
+                                X509_NAME *, sv_dn);
+    if (! X509_CRL_set_issuer_name(self, dn)) {
+        sslcroak("X509_CRL_set_issuer_name failed");
+    }
+}
+
+static
+void set_lastUpdate(SV* sv_self, char* startdate) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(startdate);
+    X509_CRL_set_lastUpdate(self, time);
+    ASN1_TIME_free(time);
+}
+
+static
+void set_nextUpdate(SV* sv_self, char* enddate) {
+    ASN1_TIME* newtime;
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(enddate);
+    X509_CRL_set_nextUpdate(self, time);
+    ASN1_TIME_free(time);
+}
+
+static
+void _do_add_entry(SV* sv_self, char* serial_hex, char* date,
+                   SV* sv_reason, SV* sv_holdinstr,
+                   SV* sv_compromisetime) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    ASN1_INTEGER* serial_asn1;
+    ASN1_TIME* revocationtime;
+    ASN1_GENERALIZEDTIME* compromisetime;
+    ASN1_OBJECT* holdinstr;
+    ASN1_ENUMERATED* reason;
+    X509_REVOKED* entry;
+    int status;
+    char* plainerr = NULL; char* sslerr = NULL;
+
+    if (! (entry = X509_REVOKED_new())) {
+        croak("X509_REVOKED_new failed");
+    }
+
+    if (! (revocationtime = parse_RFC3280_time(date, &plainerr, &sslerr))) {
+        goto error;
+    }
+
+    status = X509_REVOKED_set_revocationDate(entry, revocationtime);
+    ASN1_TIME_free(revocationtime);
+    if (! status) {
+        sslerr = "X509_REVOKED_set_revocationDate failed";
+        goto error;
+    }
+
+    if (! (serial_asn1 = parse_serial(serial_hex, &plainerr, &sslerr)) ) {
+        goto error;
+    }
+    status = X509_REVOKED_set_serialNumber(entry, serial_asn1);
+    ASN1_INTEGER_free(serial_asn1);
+    if (! status) {
+        sslerr = "X509_REVOKED_set_serialNumber failed";
+        goto error;
+    }
+
+    /* CRLv2 entry extensions */
+    if ( (! is_crlv2(sv_self)) &&
+         (SvOK(sv_reason) || SvOK(sv_holdinstr) ||
+          SvOK(sv_compromisetime))) {
+        plainerr = "Cannot add entry extensions to CRLv1 CRL";
+        goto error;
+    }
+    if (SvOK(sv_reason)) {
+        if (! (reason = ASN1_ENUMERATED_new())) {
+            plainerr = "Not enough memory for ASN1_ENUMERATED_new";
+            goto error;
+        }
+        if (! ASN1_ENUMERATED_set(reason, SvIV(sv_reason))) {
+            ASN1_ENUMERATED_free(reason);
+            sslerr = "ASN1_ENUMERATED_set failed";
+            goto error;
+        }
+        status = X509_REVOKED_add1_ext_i2d
+            (entry, NID_crl_reason, reason, 0, 0);
+        ASN1_ENUMERATED_free(reason);
+        if (! status) {
+            sslerr = "X509_REVOKED_add1_ext_i2d failed";
+            goto error;
+        }
+    }
+    if (SvOK(sv_holdinstr)) {
+        if (! (holdinstr = OBJ_txt2obj(char0_value(sv_holdinstr), 1))) {
+            sslerr = "OBJ_txt2obj failed";
+            goto error;
+        }
+        status = X509_REVOKED_add1_ext_i2d
+            (entry, NID_hold_instruction_code, holdinstr, 0, 0);
+        ASN1_OBJECT_free(holdinstr);
+        if (! status) {
+            sslerr = "X509_REVOKED_add1_ext_i2d failed";
+            goto error;
+        }
+    }
+    if (SvOK(sv_compromisetime)) {
+        if (! (compromisetime = ASN1_GENERALIZEDTIME_new())) {
+            plainerr = "Not enough memory for ASN1_GENERALIZEDTIME_new";
+            goto error;
+        }
+        if (! (ASN1_GENERALIZEDTIME_set_string
+                  (compromisetime, char0_value(sv_compromisetime)))) {
+            ASN1_GENERALIZEDTIME_free(compromisetime);
+            sslerr = "ASN1_GENERALIZEDTIME_set_string failed";
+            goto error;
+        }
+        status = X509_REVOKED_add1_ext_i2d
+            (entry, NID_invalidity_date, compromisetime, 0, 0);
+        ASN1_GENERALIZEDTIME_free(compromisetime);
+        if (! status) {
+            sslerr = "X509_REVOKED_add1_ext_i2d failed";
+            goto error;
+        }
+    }
+
+    /* All set */
+
+    if (! X509_CRL_add0_revoked(self, entry)) {
+        sslcroak("X509_CRL_add0_revoked failed");
+    }
+    return;
+
+error:
+        X509_REVOKED_free(entry);
+        if (plainerr) { croak(plainerr); }
+        if (sslerr) { sslcroak(sslerr); }
+        sslcroak("Unknown error in _do_add_entry");
+}
+
+static
+SV* sign(SV* sv_self, SV* sv_key, char* digestname) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    EVP_PKEY* key = perl_unwrap("Crypt::OpenSSL::CA::PrivateKey",
+         EVP_PKEY *, sv_key);
+    const EVP_MD* digest;
+    BIO* mem;
+
+    ensure_openssl_stuff_loaded;
+    if (! (digest = EVP_get_digestbyname(digestname))) {
+        sslcroak("Unknown digest name: %s", digestname);
+    }
+
+    if (! X509_CRL_sort(self)) { sslcroak("X509_CRL_sort failed"); }
+
+    if (! X509_CRL_sign(self, key, digest)) {
+        sslcroak("X509_CRL_sign failed");
+    }
+
+    if (! (mem = BIO_new(BIO_s_mem()))) {
+        croak("Cannot allocate BIO");
+    }
+    if (! (PEM_write_bio_X509_CRL(mem, self) &&
+           BIO_write(mem, "\\0", 1)) ) {
+        BIO_free(mem);
+        croak("Serializing certificate failed");
+    }
+    return BIO_mem_to_SV(mem);
+}
+
+static
+void _remove_extension_by_oid(SV* sv_self, char* oidtxt) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    X509_EXTENSION* deleted;
+    ASN1_OBJECT* obj;
+    int i;
+
+    if (! (obj = OBJ_txt2obj(oidtxt, 1))) {
+        sslcroak("OBJ_txt2obj failed on %s", oidtxt);
+    }
+
+    while( (i = X509_CRL_get_ext_by_OBJ(self, obj, -1)) >= 0) {
+        if (! (deleted = X509_CRL_delete_ext(self, i)) ) {
+            ASN1_OBJECT_free(obj);
+            sslcroak("X509_delete_ext failed");
+        }
+        X509_EXTENSION_free(deleted);
+    }
+    ASN1_OBJECT_free(obj);
+}
+
+static
+void _do_add_extension(SV* sv_self, SV* sv_extension) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    if (! X509_CRL_get_version(self)) {
+        croak("Cannot add extensions to a CRLv1");
+    }
+    X509_EXTENSION *ex = perl_unwrap("Crypt::OpenSSL::CA::X509V3_EXT",
+                                     X509_EXTENSION *, sv_extension);
+
+    if (! X509_CRL_add_ext(self, ex, -1)) {
+        sslcroak("X509_CRL_add_ext failed");
+    }
+}
+
+static
+void DESTROY(SV* sv_self) {
+    X509_CRL_free(perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self));
+}
+
+X509_CRL_CODE
+
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionNone>
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionCallIssuer>
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionReject>
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionPickupToken>
+
+OID constants for the respective hold instructions (see the
+I<-hold_oid> named option in L</add_entry>).  All these functions
+return a string containing a dot-separated sequence of decimal
+integers.
+
+=cut
+
+sub holdInstructionNone        { "1.2.840.10040.2.1" }
+sub holdInstructionCallIssuer  { "1.2.840.10040.2.2" }
+sub holdInstructionReject      { "1.2.840.10040.2.3" }
+sub holdInstructionPickupToken { "1.2.840.10040.2.4" }
+
+=back
+
 =head1 TODO
 
-An implementation for the main class is coming soon.  It will feature
-a simple CA database abstraction, RFC3280 compliance checks
-(especially as regards the criticality of X509v3 certificate
-extensions) and the ability to derive much information in the issued
-certificates from the CA's own certificate, as OpenSSL does.
+Add some comfort features such as the ability to transfer
+certification information automatically from the CA certificate to the
+issued certificates and CRLs, RFC3280 compliance checks (especially as
+regards the criticality of X509v3 certificate extensions) and so on.
 
 OpenSSL engines are only a few hours of work away, but aren't done
 yet.
@@ -1779,15 +2373,31 @@ yet.
 Key formats other than RSA are not (fully) supported, and at any rate,
 not unit-tested.
 
+Only the subset of the CRL extensions required to support delta-CRLs
+is working, as documented in L<Crypt::OpenSSL::CA::X509_CRL>; RFC3280
+sections 5.2.2 (C<issuerAltName>), 5.2.5 (C<issuingDistributionPoint>)
+and 5.3.4 (C<certificateIssuer> entry extension) are B<UNIMPLEMENTED>.
+I am quite unlikely to implement these arcane parts of the
+specification myself; L</PATCHES WELCOME>.
+
 =head1 SEE ALSO
 
-For the X509 stuff: L<Crypt::OpenSSL::CA::Resources>.
-
-For Inline mojo: L<Inline::C>, L<perlxstut>, L<perlguts>, L<perlapi>.
+L<Crypt::OpenSSL::CA::Resources>, L<Crypt::OpenSSL::CA::Inline::C>.
 
 =head1 AUTHOR
 
 Dominique QUATRAVAUX, C<< <domq at cpan.org> >>
+
+=head1 PATCHES WELCOME
+
+If you feel that a key feature is missing in I<Crypt::OpenSSL::CA>,
+please feel free to send me patches; I'll gladly apply them and
+re-release the whole module within a short time.  The only thing I
+require is that the patch cover all three of documentation, unit tests
+and code; and that tests pass successfully afterwards, of course, at
+least on your own machine.  In particular, this means that patches
+that only add code will be declined, no matter how desirable the new
+features are.
 
 =head1 BUGS
 
@@ -1852,6 +2462,8 @@ require My::Tests::Below unless caller();
 
 __END__
 
+=begin testsuite
+
 =head1 TEST SUITE
 
 =cut
@@ -1874,7 +2486,7 @@ test "X509_NAME" => sub {
     is($name->to_string(), "");
 
     $name = Crypt::OpenSSL::CA::X509_NAME->new
-        (CN => "John Doe", "2.5.4.11" => "Internet widgets");
+        ("2.5.4.11" => "Internet widgets", CN => "John Doe");
     like($name->to_string(), qr/cn=John Doe/i);
     like($name->to_string(), qr/ou=Internet widgets/i);
 
@@ -1913,12 +2525,34 @@ test "X509_NAME" => sub {
     }
 };
 
+test "X509_NAME->new_utf8" => sub {
+    my $name = Crypt::OpenSSL::CA::X509_NAME->new_utf8
+        ("2.5.4.11" => "Internet widgets", CN => "John Doe");
+    like($name->to_string, qr/Internet widgets.*John Doe/i);
+    unlike($name->to_string, qr/John Doe.*John Doe/i, "no double encoding");
+    my $asn1 = x509_decoder('Name');
+    my $tree = $asn1->decode($name->to_asn1);
+    if (! isnt($tree, undef, "decoding succesful")) {
+        diag $asn1->error;
+        diag run_dumpasn1($name->to_asn1);
+    } else {
+        my $rdn_asn1 = $tree->{rdnSequence}->[1]->[0];
+        my ($rdn_type) = keys %{$rdn_asn1->{value}};
+        is($rdn_type, "utf8String"); # Unconditional UTF-8 encoding
+    }
+};
+
 skip_next_test "Memchmark needed" if cannot_check_bytes_leaks;
-test "X509_NAME accessors don't leak" => sub {
-    my $name = Crypt::OpenSSL::CA::X509_NAME->new
-        (CN => "coucou", "2.5.4.11.1.2.3.4" => "who cares?");
+test "X509_NAME leaks" => sub {
     leaks_bytes_ok {
         for(1..10000) {
+            my $name = Crypt::OpenSSL::CA::X509_NAME->new
+                (CN => "coucou", "2.5.4.11.1.2.3.4" => "who cares?");
+            $name->to_string();
+            $name->to_asn1();
+
+            $name = Crypt::OpenSSL::CA::X509_NAME->new_utf8
+                (CN => "coucou", "2.5.4.11.1.2.3.4" => "who cares?");
             $name->to_string();
             $name->to_asn1();
         }
@@ -2023,11 +2657,8 @@ test "PrivateKey: parse plaintext software key" => sub {
         parse($test_keys_plaintext{rsa1024});
     is(ref($key), "Crypt::OpenSSL::CA::PrivateKey");
 
-    like($key->get_RSA_modulus, qr/^[0-9A-F]+$/);
-    is($key->get_RSA_modulus,
-       Crypt::OpenSSL::CA::PublicKey->parse_RSA($test_public_keys{rsa1024})
-       ->get_modulus,
-      "matching private and public key moduli");
+    is($key->get_public_key->to_PEM, $test_public_keys{rsa1024},
+       "matching private and public key");
 
     errstack_empty_ok();
 };
@@ -2038,7 +2669,7 @@ test "PrivateKey: parse password-protected software key" => sub {
     my $key = Crypt::OpenSSL::CA::PrivateKey->
         parse($test_keys_password{rsa1024}, -password => "secret");
     is(ref($key), "Crypt::OpenSSL::CA::PrivateKey");
-    like($key->get_RSA_modulus, qr/^[0-9A-F]+$/);
+    is($key->get_public_key->to_PEM, $test_public_keys{rsa1024});
 
     # wrong password:
     eval {
@@ -2078,7 +2709,7 @@ test "PrivateKey: memory leaks" => sub {
     leaks_bytes_ok {
         for(1..1000) {
             Crypt::OpenSSL::CA::PrivateKey
-                ->parse($test_keys_plaintext{rsa1024})->get_RSA_modulus;
+                ->parse($test_keys_plaintext{rsa1024})->get_public_key;
         }
     };
 };
@@ -2141,8 +2772,8 @@ test "X509 parsing" => sub {
     like($x509->dump, qr/Internet Widgits/);
 
     is(Crypt::OpenSSL::CA::PrivateKey->
-       parse($test_keys_plaintext{rsa1024})->get_RSA_modulus,
-       $x509->get_public_key->get_modulus,
+       parse($test_keys_plaintext{rsa1024})->get_public_key->to_PEM,
+       $x509->get_public_key->to_PEM,
        "matching private key and certificate");
 
     is($x509->get_subject_keyid,
@@ -2217,12 +2848,12 @@ test "signing several times over the same ::X509 instance" => sub {
 };
 
 skip_next_test if cannot_check_bytes_leaks;
-test "REGRESSION: set_serial_hex memory leak" => sub {
+test "REGRESSION: set_serial memory leak" => sub {
     leaks_bytes_ok {
         for(1..100) {
             my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
             for(1..200) { # Checks for robustness and leaks
-                $cert->set_serial_hex("1234567890abcdef1234567890ABCDEF");
+                $cert->set_serial("0x1234567890abcdef1234567890ABCDEF");
             }
             $cert->sign($cakey, "sha1");
         }
@@ -2300,9 +2931,9 @@ test "no leak on ->set_extension called multiple times" => sub {
 };
 
 use Crypt::OpenSSL::CA::Test qw(@test_DN_CAs);
-sub christmas_tree_ify {
+sub christmasify_cert {
     my ($cert) = @_;
-    $cert->set_serial_hex("1234567890abcdef1234567890ABCDEF");
+    $cert->set_serial("0x1234567890abcdef1234567890ABCDEF");
 
     $cert->set_subject_DN
         (Crypt::OpenSSL::CA::X509_NAME->new
@@ -2328,7 +2959,7 @@ sub christmas_tree_ify {
         'email:johndoe@example.com,email:johndoe@example.net');
 }
 
-# christmas_tree_ify runs the POD snippets and that's neat, but we
+# christmasify_cert runs the POD snippets and that's neat, but we
 # want to call Perl's eval only once for fear of memory leakage in
 # Perl.
 {
@@ -2348,7 +2979,7 @@ SUB_FROM_POD
 
 test "christmas tree certificate" => sub {
     my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
-    christmas_tree_ify($cert);
+    christmasify_cert($cert);
     my $pem = $cert->sign($cakey, "sha1");
     certificate_looks_ok($pem);
 
@@ -2384,7 +3015,7 @@ test "christmas tree certificate" => sub {
 
 test "christmas tree validates OK in certificate chain" => sub {
     my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
-    christmas_tree_ify($cert);
+    christmasify_cert($cert);
     my $pem = $cert->sign($cakey, "sha1");
     certificate_chain_ok($pem, [ $test_rootca_certs{rsa1024} ]);
 };
@@ -2395,7 +3026,7 @@ test "X509 memory leaks" => sub {
         for(1..100) {
             my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
             for(1..200) { # Checks for robustness and leaks
-                christmas_tree_ify($cert);
+                christmasify_cert($cert);
             }
             $cert->sign($cakey, "sha1");
         }
@@ -2403,12 +3034,133 @@ test "X509 memory leaks" => sub {
             my $cert = Crypt::OpenSSL::CA::X509->parse
                 ($test_self_signed_certs{rsa1024});
             for(1..200) {
-                christmas_tree_ify($cert);
+                christmasify_cert($cert);
             }
             $cert->sign($cakey, "sha1");
         }
     };
 };
+
+=head2 CRL tests
+
+=cut
+
+my $crl_issuer_dn = Crypt::OpenSSL::CA::X509_NAME->new(@test_DN_CAs);
+
+test "CRLv1" => sub {
+    my $crl = new Crypt::OpenSSL::CA::X509_CRL("CRLv1");
+    ok($crl->isa("Crypt::OpenSSL::CA::X509_CRL"));
+    ok(! $crl->is_crlv2);
+    $crl->set_issuer_DN($crl_issuer_dn);
+    $crl->set_lastUpdate("20070101000000Z");
+    $crl->set_nextUpdate("20570101000000Z");
+    $crl->add_entry("0x10", "20070212100000Z");
+
+    my $crlpem = $crl->sign($cakey, "sha1");
+    my ($crldump, $err) =
+        run_thru_openssl($crlpem, qw(crl -noout -text));
+    is($?, 0, "``openssl crl'' ran successfully")
+        or die $err;
+    like($crldump, qr/Version 1/, "CRLv1");
+    like($crldump, qr/Issuer.*Internet Widgits/, "Issuer name");
+    like($crldump, qr/last update.*2007/i, "Last update");
+    like($crldump, qr/next update.*2057/i, "Next update");
+
+    eval {
+        $crl->set_extension("authorityKeyIdentifier_keyid", "de:ad:be:ef");
+        fail("Should have thrown");
+    };
+    like(Dumper($@), qr/extension/i);
+
+    eval {
+        $crl->add_entry("0x11", "20070212100000Z",
+                        -reason => "cessationOfOperation");
+        fail("Should have thrown");
+    };
+    like(Dumper($@), qr/extension/i);
+    like(Dumper($@), qr/crlv1/i);
+};
+
+sub christmasify_crl {
+    my ($crl) = @_;
+    $crl->set_issuer_DN($crl_issuer_dn);
+    $crl->set_lastUpdate("20070101000000Z");
+    $crl->set_nextUpdate("20570101000000Z");
+
+    $crl->set_extension("authorityKeyIdentifier_keyid", "de:ad:be:ef");
+    $crl->set_extension("crlNumber", "0x42deadbeef42", -critical => 1);
+
+    $crl->set_extension("freshestCRL",
+                        "URI:http://www.example.com/deltacrl.crl",
+                        -critical => 0);
+}
+
+sub add_entries_to_crl {
+    my ($crl) = @_;
+    $crl->add_entry("0x10", "20070212100000Z");
+    $crl->add_entry("0x11", "20070212100100Z", -reason => "unspecified");
+    $crl->add_entry("0x42deadbeef32", "20070212090100Z",
+                    -hold_instruction => "holdInstructionPickupToken");
+    $crl->add_entry("0x12", "20070212100200Z", -reason => "keyCompromise",
+                    -compromise_time => "20070210000000Z");
+}
+
+test "Christmas-tree CRL" => sub {
+    my $crl = Crypt::OpenSSL::CA::X509_CRL->new();
+    ok($crl->is_crlv2);
+    christmasify_crl($crl);
+    add_entries_to_crl($crl);
+    my $crlpem = $crl->sign($cakey, "sha1");
+    my ($crldump, $err) =
+        run_thru_openssl($crlpem, qw(crl -noout -text));
+    is($?, 0, "``openssl crl'' ran successfully")
+        or die $err;
+    like($crldump, qr/last update:.*2007/i);
+    like($crldump, qr/next update:.*2057/i);
+    like($crldump, qr/keyid.*DE:AD:BE:EF/);
+    like($crldump, qr/CRL Number.*critical/i);
+    # Right now OpenSSL cannot parse freshest CRL indicator:
+    like($crldump, qr/deltacrl\.crl/);
+
+    my @crlentries = split m/Serial Number: /, $crldump;
+    shift(@crlentries); # Leading garbage
+    my %crlentries;
+    for(@crlentries) {
+        if (! m/^([0-9A-F]+)(.*)$/si) {
+            fail("Incorrect CRL entry\n$_\n");
+            next;
+        }
+        $crlentries{uc($1)} = $2;
+    }
+    like($crlentries{"10"}, qr/Feb 12/, "revocation dates");
+    like($crlentries{"11"}, qr/unspecified/i) or do {
+        my $dumpasn1 = run_dumpasn1
+            (run_thru_openssl($crlpem, qw(crl -outform der)));
+        warn $dumpasn1;
+    };
+    like($crlentries{"12"}, qr/key.*compromise/i);
+    like($crlentries{"12"}, qr/Invalidity Date/i);
+    like($crlentries{"42DEADBEEF32"}, qr/hold/i)
+        or warn $crldump;
+};
+
+skip_next_test if cannot_check_bytes_leaks;
+test "CRL memory leaks" => sub {
+    leaks_bytes_ok {
+        for(1..100) {
+            my $crl = Crypt::OpenSSL::CA::X509_CRL->new();
+            for(1..200) { # Checks for robustness and leaks
+                christmasify_crl($crl);
+            }
+            for(1..20) { # Not too many entries, as that would cause
+                # false positives
+                add_entries_to_crl($crl);
+            }
+            $crl->sign($cakey, "sha1");
+        }
+    };
+};
+
 
 =head2 Synopsis test
 

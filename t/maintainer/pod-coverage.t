@@ -23,4 +23,3 @@ if ( @modules ) {
     $Test->plan( tests => 1 );
     $Test->ok( 1, "No modules found." );
 }
-

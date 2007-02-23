@@ -337,7 +337,7 @@ following rules:
 
 the first token after C<My::Tests::Below> is a double-quoted string
 that contains the unique label of the POD snippet (passed as the first
-argument to I<pod_data_snippet());
+argument to I<pod_data_snippet()>);
 
 =item *
 
