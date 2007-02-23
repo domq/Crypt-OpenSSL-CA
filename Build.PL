@@ -59,27 +59,76 @@ etc.
 
 =cut
 
-=head1 CUSTOM BUILD PROCESSES
+=head1 CUSTOM COMMAND-LINE SWITCHES
+
+=over
+
+=item I<full_debugging=1>
+
+Enables L<Crypt::OpenSSL::CA::Inline::C/full_debugging> while running
+C<./Build test>.  This is only intended for situations where setting
+an environment variable is inconvenient (e.g. the Perl debugger).
+Implies C<use_blib=0> (see L<My::Module::Build>).
+
+=cut
+
+sub ACTION_test {
+    my $self = shift;
+
+    local $self->{args} = {%{$self->{args}}};
+
+    my $orig = $ENV{FULL_DEBUGGING};
+    local $ENV{FULL_DEBUGGING};
+    $ENV{FULL_DEBUGGING} = $orig if defined $orig;
+
+    if ($self->{args}->{full_debugging}) {
+        $ENV{FULL_DEBUGGING} = 1;
+        $self->use_blib(0);
+    }
+
+    $self->depends_on("buildXS") if $self->use_blib;
+
+    return $self->SUPER::ACTION_test;
+}
+
+=back
+
+=head1 CUSTOM BUILD METHODS
 
 =over
 
 =item I<ACTION_build()>
 
-Overloaded so as to also build the XS modules for distribution.  This
-is a bit lengthy, but be aware that saying just C<./Build test> will
-B<not> redo this process.
+Overloaded so as to also call L</ACTION_buildXS>.
+
+=item I<ACTION_buildXS()>
+
+Builds the XS modules for distribution into L<blib/arch>.
 
 =cut
 
 sub ACTION_build {
     my $self = shift;
+    $self->depends_on("buildXS");
     $self->SUPER::ACTION_build(@_);
+}
+
+sub ACTION_buildXS {
+    my ($self) = @_;
+
+    do { unlink($_) or die "Cannot unlink($_): $!" } for glob("*.inl");
 
     my @sofiles = glob(catfile(qw(blib arch auto Crypt OpenSSL CA * *.so)));
+    my @sources = (catfile(qw(lib Crypt OpenSSL CA.pm)),
+                   catfile(qw(lib Crypt OpenSSL CA Inline C.pm)));
 
-    return if (@sofiles && $self->up_to_date
-               (catfile(qw(lib Crypt OpenSSL CA.pm)), \@sofiles));
+    return if (@sofiles && $self->up_to_date (\@sources, \@sofiles));
 
+    unlink @sofiles;
+
+    # And now some ugly kludge to make everything hold together.
+    # Inline::C wants to use MakeMaker; we don't.  So let's call it in
+    # a sub-Perl.
     my $version = $self->dist_version;
     my $script = <<"SCRIPT";
 BEGIN { \$Crypt::OpenSSL::CA::VERSION = '$version' ; }
@@ -95,7 +144,7 @@ SCRIPT
     local $ENV{PERL_INLINE_BUILD_NOISY} = 1;
     system(@cmdline);
     die "Command exited with status " . ($? >> 8) if $?;
-    do { unlink($_) or die "Cannot unlink($_): $!" } for glob("*.inl");
+    do { unlink or die "Cannot unlink($_): $!" } for glob("*.inl");
 }
 
 =item I<process_pm_files>

@@ -52,7 +52,7 @@ order.  L<Crypt::OpenSSL::CA> enjoys full UTF-8 support.
 
 use Crypt::OpenSSL::CA::Test qw(test_simple_utf8 test_bmp_utf8);
 
-my $subject_dn = Crypt::OpenSSL::CA::X509_NAME->new
+my $subject_dn = Crypt::OpenSSL::CA::X509_NAME->new_utf8
     (C => "fr", O => test_simple_utf8(),
      OU => test_bmp_utf8(), CN => "test subject");
 
@@ -111,10 +111,8 @@ sub sign_certificate {
     my $ca_cert_obj = Crypt::OpenSSL::CA::X509
         ->parse($ca_certificate);
 
-    $cert->set_serial_hex("1234567890abcdef1234567890ABCDEF");
-    $cert->set_subject_DN
-        (Crypt::OpenSSL::CA::X509_NAME->new
-         (CN => "coucou", "2.5.4.11.1.2.3.4" => "who cares?"));
+    $cert->set_serial("0x1234567890abcdef1234567890ABCDEF");
+    $cert->set_subject_DN($subject_dn);
     $cert->set_issuer_DN($ca_cert_obj->get_subject_DN);
 
     $cert->set_notBefore("20060108000000Z");
@@ -148,7 +146,7 @@ sub sign_certificate {
        (subjectAltName =>
         'email:johndoe@example.com,email:johndoe@example.net');
 
-    return $cert->sign($ca_privkey_obj, "sha1");
+    return $cert->sign($ca_privkey_obj, "sha256");
 }
 
 
@@ -181,8 +179,6 @@ Both are done using L<Crypt::OpenSSL::CA/run_thru_openssl>.
 
 =cut
 
-our $tempdir = File::Temp::tempdir
-    ("perl-test-XXXXXX", TMPDIR => 1, CLEANUP => 1);
 use Crypt::OpenSSL::CA::Test qw(run_dumpasn1 certificate_chain_ok);
 sub ok_certificate {
     my ($certpem) = @_;
@@ -195,7 +191,7 @@ sub ok_certificate {
     like($certdump, qr/12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF/i,
          "big hex serial");
     like($certdump, qr/Issuer:.*Widgits/, "issuer DN");
-    like($certdump, qr/Subject:.*who cares/, "subject DN");
+    like($certdump, qr/Subject:.*test subject/, "subject DN");
     like($certdump, qr/basic.*constraints.*critical.*\n.*CA:FALSE/i,
          "Critical basicConstraints");
     like($certdump, qr/example.com/, "subjectAltName 1/2");
