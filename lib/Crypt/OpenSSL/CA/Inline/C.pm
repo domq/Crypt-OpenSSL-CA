@@ -25,7 +25,16 @@ Crypt::OpenSSL::CA::Inline::C - A bag of XS and L<Inline::C> tricks
 
   C_CODE_SAMPLE
 
-  # Lots and lots of the same...
+  # Then maybe some Perl...
+
+  use Crypt::OpenSSL::CA::Inline::C <<"MORE_C_CODE";
+
+  static
+  SV* another() {
+    // ...
+  }
+
+  MORE_C_CODE
 
   use Crypt::OpenSSL::CA::Inline::C "__END__";
 
@@ -56,9 +65,9 @@ its line, as demonstrated.
 
 =item the "__END__" pragma
 
-In order to accomodate hypothetical future extensions, the code in
-L<Crypt::OpenSSL::CA> should use the following pragma to signal that
-it won't attempt to add any L<Inline::C> code after this point:
+The code in L<Crypt::OpenSSL::CA> must use the following pragma to
+signal that it won't attempt to add any L<Inline::C> code after this
+point:
 
    use Crypt::OpenSSL::CA::Inline::C "__END__";
 
@@ -77,10 +86,15 @@ the following C functions:
 
 Returns the string value of a Perl SV, making sure that it exists and
 is zero-terminated beforehand. If C<string> is undef, returns the
-empty string (B<not> NULL).  See L<perlguts/Working with SVs>, look
-for the word "Nevertheless" - I'm pretty sure there is a macro in
-Perl's convenience stuff that does exactly that already, but I don't
-know it...
+empty string (B<not> NULL; see L</char0_value_or_null>).  See
+L<perlguts/Working with SVs>, look for the word "Nevertheless" - I'm
+pretty sure there is a macro in Perl's convenience stuff that does
+exactly that already, but I don't know it...
+
+=item I<static inline char* char0_value_or_null(SV* string)>
+
+Like L</char0_value>, except that NULL is returned if C<string> is
+undef.
 
 =item I<static inline SV* perl_wrap(class, pointer)>
 
@@ -235,15 +249,20 @@ sub _c_boilerplate { <<'C_BOILERPLATE'; }
 #error OpenSSL version 0.9.7 or later is required. See comments in CA.pm
 #endif
 
-static inline char* char0_value(SV* perlscalar) {
+static inline char* char0_value_or_null(SV* perlscalar) {
      unsigned int length; char* retval;
 
      SvPV(perlscalar, length);
-     if (! SvPOK(perlscalar)) { return ""; } // Undef
+     if (! SvPOK(perlscalar)) { return NULL; }
      SvGROW(perlscalar, length + 1);
      retval = SvPV_nolen(perlscalar);
      retval[length] = '\0';
      return retval;
+}
+
+static inline char* char0_value(SV* perlscalar) {
+     char* retval = char0_value_or_null(perlscalar);
+     return ( retval ? retval : "" );
 }
 
 static inline SV* perl_wrap(const char* class, void* pointer) {
@@ -455,14 +474,15 @@ L</SYNOPSIS> is implemented in terms of L<Inline>.
 
 =over
 
+=item I<%c_code>
+
+A lexical variable that L</import> uses to accumulate all the C code
+submitted by L<Crypt::OpenSSL::CA>.  Keys are package names, and
+values are snippets of C.
+
 =cut
 
-use Sub::Uplevel;
-BEGIN { die <<"MESSAGE" if $INC{"Inline.pm"}; }
-Sorry, Inline is already loaded and Sub::Uplevel will not be able to
-fool it.  Too bad, it means that Crypt::OpenSSL::CA::Inline::C will
-not work!
-MESSAGE
+my %code;
 
 use Inline::C ();
 
@@ -470,8 +490,30 @@ use Inline::C ();
 
 Called whenever one of the C<< use Crypt::OpenSSL::CA::Inline::C "foo"
 >> pragmas (listed in L</SYNOPSIS>) is seen by Perl; performs the
-actual magic of the module.  Mostly delegates to L<Inline/import>,
-with the following tweaks:
+actual magic of the module.  Stashes everything into L</%code>, and
+invokes L</compile_everything> at the end.
+
+=cut
+
+sub import {
+    my ($class, $c_code) = @_;
+
+    return if ! defined $c_code; # A simple "use"
+
+    return $class->compile_everything if ($c_code eq "__END__");
+
+    my ($package, $file, $line) = caller;
+    $code{$package} ||= _c_boilerplate;
+    $code{$package} .= sprintf(qq'#line %d "%s"\n', $line + 1, $file)
+        . $c_code;
+    return;
+}
+
+=item I<compile_everything()>
+
+Called when L</the "__END__" pragma> is seen.  Invokes
+L<Inline/import> once for every package (that is, every key in
+L</%code>), with the following tweaks:
 
 =over
 
@@ -489,36 +531,50 @@ the caller-provided C code.
 
 =cut
 
-sub import {
-    my ($class, $c_code) = @_;
+sub compile_everything {
+    my ($class) = @_;
+    keys %code; while(my ($package, $c_code) = each %code) {
+        my $compile_params =
+            ($class->full_debugging ? <<"WITH_DEBUGGING" :
+    OPTIMIZE => "-g",
+    CLEAN_AFTER_BUILD => 0,
+WITH_DEBUGGING
+             <<"WO_DEBUGGING");
+    OPTIMIZE => "-g -O2",
+WO_DEBUGGING
 
-    return if ! defined $c_code; # A simple "use"
+        my $openssl_params = sprintf
+            (<<"LIBS_PARAMS",
+    LIBS => "-lcrypto -lssl%s",
+LIBS_PARAMS
+             ( $ENV{BUILD_OPENSSL_LIBDIR} ?
+               " -L$ENV{BUILD_OPENSSL_LIBDIR}" : ""));
+        if ($ENV{BUILD_OPENSSL_INCLUDEDIR}) {
+            $openssl_params .= <<"INCLUDES_PARAMS";
+    INC => "-I$ENV{BUILD_OPENSSL_INCLUDEDIR}",
+INCLUDES_PARAMS
+        }
 
-    return $class->compile_everything if ($c_code eq "__END__");
+        my $version_params =
+            ( $Crypt::OpenSSL::CA::VERSION ? <<"VERSION_PARAMS" : "" );
+    VERSION => \$Crypt::OpenSSL::CA::VERSION,
+VERSION_PARAMS
 
-    my ($package) = caller;
-
-    uplevel 1, \&Inline::import,
-        (Inline => C => Config =>
-         NAME => $package,
-         ( $Crypt::OpenSSL::CA::VERSION ?
-           (VERSION => $Crypt::OpenSSL::CA::VERSION) : () ),
-         LIBS => join(" ", qw(-lcrypto -lssl)),
-         ($class->full_debugging ? (OPTIMIZE => "-g") :
-          (OPTIMIZE => "-g -O2")),
-         CCFLAGS => join(" ", qw(-Wall -Wno-unused -Werror)),
-         ( $class->full_debugging ? (CLEAN_AFTER_BUILD => 0) : () ));
-    uplevel 1, \&Inline::import, Inline => C => (_c_boilerplate . $c_code);
-    return;
+        eval <<"FAKE_Inline_C_INVOCATION"; die $@ if $@;
+package $package;
+use Inline C => Config =>
+    NAME => '$package',
+    CCFLAGS => "-Wall -Wno-unused -Werror",
+$compile_params
+$version_params
+$openssl_params
+;
+use Inline C => <<'C_CODE';
+$c_code
+C_CODE
+FAKE_Inline_C_INVOCATION
+    }
 }
-
-=item I<compile_everything()>
-
-Called when L</the "__END__" pragma> is seen.  Currently does nothing.
-
-=cut
-
-sub compile_everything {}
 
 =item I<full_debugging>
 
@@ -603,12 +659,23 @@ INSTALLED_VERSION
 
 =end this_pod_is_not_ours
 
-=head1 TODO
+=head1 ENVIRONMENT VARIABLES
 
-Right now it is not possible to invoke
-I<Crypt::OpenSSL::CA::Inline::C> several times from the same package,
-yet allowing that would be straightforward.  the immediate benefit of
-that would be to allow to intermingle POD and C code freely.
+=head2 FULL_DEBUGGING
+
+See L</full_debugging>
+
+=head2 BUILD_OPENSSL_INCLUDEDIR
+
+Contains the path to the OpenSSL header files; passed on to
+L<Inline::C/INC> by L</compile_everything> in order to clue the
+compiler into finding them.
+
+=head2 BUILD_OPENSSL_LIBDIR
+
+Contains the path to the OpenSSL libraries; passed on to
+L<Inline::C/LIBS> by L</compile_everything> in order to clue the
+linker into finding them.
 
 =head1 SEE ALSO
 
@@ -805,7 +872,7 @@ test "sslcroak()" => sub {
     }
 
     eval {
-        TestCRoutines::argh;
+        TestCRoutines::argh();
         fail("Should have thrown");
     };
     is(ref($@), "Crypt::OpenSSL::CA::Error") or warn Dumper($@);
@@ -815,7 +882,7 @@ test "sslcroak()" => sub {
     errstack_empty_ok();
     use Net::SSLeay;
     is(Net::SSLeay::BIO_new_file("/no/such/file_", "r"), 0);
-    eval { TestCRoutines::argh; fail("should have thrown") };
+    eval { TestCRoutines::argh(); fail("should have thrown") };
     is(ref($@), "Crypt::OpenSSL::CA::Error");
     is(ref($@->{-openssl}), "ARRAY");
     cmp_ok(scalar(@{$@->{-openssl}}), ">", 0);
@@ -826,7 +893,7 @@ test "sslcroak()" => sub {
 
     unless (cannot_check_bytes_leaks) {
         leaks_bytes_ok {
-            for(1..200) { eval { TestCRoutines::ulp }; }
+            for(1..200) { eval { TestCRoutines::ulp() }; }
         };
     }
 };

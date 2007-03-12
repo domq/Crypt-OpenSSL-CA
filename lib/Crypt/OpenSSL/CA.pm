@@ -5,7 +5,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = 0.04;
+our $VERSION = 0.05;
 
 =head1 NAME
 
@@ -32,8 +32,8 @@ Crypt::OpenSSL::CA - The crypto parts of an X509v3 Certification Authority
                          -critical => 1);
     $x509->set_extension("subjectKeyIdentifier",
                          $pubkey->get_openssl_keyid);
-    $x509->set_extension("authorityKeyIdentifier_keyid",
-                         $pubkey->get_openssl_keyid);
+    $x509->set_extension("authorityKeyIdentifier",
+                         { keyid => $pubkey->get_openssl_keyid });
     my $pem = $x509->sign($privkey, "sha1");
 
 =for My::Tests::Below "synopsis" end
@@ -83,12 +83,13 @@ I<Crypt::OpenSSL::CA> provides some glue in Perl too, which is mostly
 syntactic sugar to get a more Perlish API out of the C in OpenSSL.
 
 Note that the OpenSSL-wrapping classes don't strive for completeness
-of the exposed API in the least; rather, they export just enough
-features to make them simultaneously testable and useful for the
-purpose of issuing X509 certificates and CRLs.  In particular,
-I<Crypt::OpenSSL::CA> is not so good at parsing already-existing
-cryptographic artifacts (However, L</PATCHES WELCOME>, plus there are
-other modules on the CPAN that already do that.)
+of the exposed API; rather, they seek to export enough features to
+make them simultaneously testable and useful for the purpose of
+issuing X509 certificates and CRLs.  In particular,
+I<Crypt::OpenSSL::CA> is currently not so good at parsing
+already-existing cryptographic artifacts (However, L</PATCHES
+WELCOME>, plus there are other modules on the CPAN that already do
+that.)
 
 =head2 Error Management
 
@@ -193,6 +194,17 @@ package Crypt::OpenSSL::CA::X509_NAME;
 use Carp qw(croak);
 use utf8 ();
 
+use Crypt::OpenSSL::CA::Inline::C <<"X509_BASE";
+
+#include <openssl/x509.h>
+
+static
+void DESTROY(SV* obj) {
+    X509_NAME_free(perl_unwrap("${\__PACKAGE__}", X509_NAME *, obj));
+}
+
+X509_BASE
+
 =item I<new_utf8($dnkey1, $dnval1, ...)>
 
 Constructs and returns a new I<Crypt::OpenSSL::CA::X509_NAME> object;
@@ -219,8 +231,8 @@ consider using I<new()> instead of I<new_utf8()>.
 I<new_utf8> does not support multiple AVAs in a single RDN.  If you
 don't understand this sentence, consider yourself a lucky programmer.
 
-See also L</get_subject_DN> for an alternative way of constructing
-instances of this class.
+See also L</get_subject_DN> and L</get_issuer_DN> for an alternative
+way of constructing instances of this class.
 
 =item I<new($dnkey1, $dnval1, ...)>
 
@@ -259,26 +271,11 @@ sub new {
     return $self;
 }
 
-=item I<to_string()>
+# In order to share code between L</new> and L</new_utf8>, I had to
+# make the class mutable internally.
 
-Returns a string representation of this DN object. Uses
-B<X509_NAME_oneline(3)>.  The return value does not conform to any
-standard; in particular it does B<not> comply with RFC4514, and
-embedded Unicode characters will B<not> be dealt with elegantly.
-I<to_string()> is therefore intended only for debugging.
+use Crypt::OpenSSL::CA::Inline::C <<"MUTABLE_X509_NAME";
 
-=item I<to_asn1()>
-
-Returns an ASN.1 DER representation of this DN object, as a string of
-bytes.
-
-=cut
-
-use Crypt::OpenSSL::CA::Inline::C <<"X509_NAME_CODE";
-#include <openssl/x509.h>
-
-/* In order to share code between L</new> and L</new_utf8>, I had to
-   make the class mutable internally. */
 static
 SV* _new(char* class) {
     X509_NAME *retval = X509_NAME_new();
@@ -327,12 +324,36 @@ void _add_RDN_utf8(SV* sv_self, SV* sv_key, SV* sv_val) {
          sslcroak("X509_NAME_add_entry_by_txt failed for %s=%s", key, val);
     }
 }
+MUTABLE_X509_NAME
+
+=item I<to_string()>
+
+Returns a string representation of this DN object. Uses
+B<X509_NAME_oneline(3)>.  The return value does not conform to any
+standard; in particular it does B<not> comply with RFC4514, and
+embedded Unicode characters will B<not> be dealt with elegantly.
+I<to_string()> is therefore intended only for debugging.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"TO_STRING";
 
 static
 SV* to_string(SV* obj) {
     X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, obj);
     return openssl_string_to_SV(X509_NAME_oneline(self, NULL, 4096));
 }
+
+TO_STRING
+
+=item I<to_asn1()>
+
+Returns an ASN.1 DER representation of this DN object, as a string of
+bytes.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"TO_ASN1";
 
 static
 SV* to_asn1(SV* obj) {
@@ -347,12 +368,8 @@ SV* to_asn1(SV* obj) {
     return retval;
 }
 
-static
-void DESTROY(SV* obj) {
-    X509_NAME_free(perl_unwrap("${\__PACKAGE__}", X509_NAME *, obj));
-}
+TO_ASN1
 
-X509_NAME_CODE
 
 =back
 
@@ -367,12 +384,66 @@ I<Crypt::OpenSSL::CA::PublicKey> objects are immutable.
 
 package Crypt::OpenSSL::CA::PublicKey;
 
+use Crypt::OpenSSL::CA::Inline::C <<"PUBLICKEY_BASE";
+#include <openssl/pem.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/x509.h>     /* For validate_SPKAC */
+#include <openssl/x509v3.h>   /* For get_openssl_keyid() */
+#include <openssl/objects.h>  /* For NID_subject_key_identifier
+                                 in get_openssl_keyid() */
+
+static
+void DESTROY(SV* obj) {
+    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj));
+}
+
+PUBLICKEY_BASE
+
 =item I<parse_RSA($pemstring)>
 
 Parses an RSA public key from $pemstring and returns an
 I<Crypt::OpenSSL::CA::PublicKey> instance.  See also
 L</get_public_key> for an alternative way of creating instances of
 this class.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"PARSE_RSA";
+
+static
+SV* parse_RSA(char *class, const char* pemkey) {
+    BIO* keybio;
+    RSA* pubkey;
+    EVP_PKEY* retval;
+
+    keybio = BIO_new_mem_buf((void *) pemkey, -1);
+    if (keybio == NULL) {
+        croak("BIO_new_mem_buf failed");
+    }
+
+    pubkey = PEM_read_bio_RSA_PUBKEY(keybio, NULL, NULL, NULL);
+    BIO_free(keybio);
+    if (pubkey == NULL) {
+            sslcroak("unable to parse RSA public key");
+    }
+
+    retval = EVP_PKEY_new();
+    if (! retval) {
+        RSA_free(pubkey);
+        croak("Not enough memory for EVP_PKEY_new");
+    }
+
+    if (! EVP_PKEY_assign_RSA(retval, pubkey)) {
+        RSA_free(pubkey);
+        EVP_PKEY_free(retval);
+        sslcroak("EVP_PKEY_assign_RSA failed");
+    }
+
+    return perl_wrap("${\__PACKAGE__}", retval);
+}
+
+PARSE_RSA
 
 =item I<validate_SPKAC($spkacstring)>
 
@@ -396,38 +467,9 @@ present), one should use other means such as L<Convert::ASN1>; ditto
 if one just wants to extract the public key and doesn't care about the
 signature.
 
-=item I<to_PEM>
-
-Returns the contents of the public key as a PEM string.
-
-=item I<get_modulus()>
-
-Returns the modulus of this I<Crypt::OpenSSL::CA::PublicKey> instance,
-assuming that it is an RSA or DSA key.  This is similar to the output
-of C<openssl x509 -modulus>, except that the leading C<Modulus=>
-identifier is trimmed and the returned string is not
-newline-terminated.
-
-=item I<get_openssl_keyid()>
-
-Returns a cryptographic hash over this public key, as OpenSSL's
-C<subjectKeyIdentifier=hash> configuration directive to C<openssl ca>
-would compute it for a certificate that contains this key.  The return
-value is a string of colon-separated pairs of uppercase hex digits,
-adequate e.g. for passing as the $value parameter to
-L</set_extension>.
-
 =cut
 
-use Crypt::OpenSSL::CA::Inline::C <<"PUBLICKEY_CODE";
-#include <openssl/pem.h>
-#include <openssl/bio.h>
-#include <openssl/evp.h>
-#include <openssl/x509.h>     /* For validate_SPKAC */
-#include <openssl/x509v3.h>   /* For get_openssl_keyid() */
-#include <openssl/objects.h>  /* For NID_subject_key_identifier
-                                 in get_openssl_keyid() */
-
+use Crypt::OpenSSL::CA::Inline::C <<"VALIDATE";
 static
 SV* validate_SPKAC(char *class, const char* base64_spkac) {
     NETSCAPE_SPKI* spkac;
@@ -480,6 +522,15 @@ SV* validate_PKCS10(char *class, const char* pem_pkcs10) {
     }
     return perl_wrap("${\__PACKAGE__}", retval);
 }
+VALIDATE
+
+=item I<to_PEM>
+
+Returns the contents of the public key as a PEM string.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"TO_PEM";
 
 static
 SV* to_PEM(SV* sv_self) {
@@ -498,7 +549,7 @@ SV* to_PEM(SV* sv_self) {
         BIO_free(mem);
         croak("Unknown public key type %d", self->type);
     }
-    printstatus = printstatus && BIO_write(mem, "\\0", 1);
+    printstatus = printstatus && ( BIO_write(mem, "\\0", 1) > 0 );
     if (! printstatus) {
         BIO_free(mem);
         sslcroak("Serializing public key failed");
@@ -506,37 +557,19 @@ SV* to_PEM(SV* sv_self) {
     return BIO_mem_to_SV(mem);
 }
 
-static
-SV* parse_RSA(char *class, const char* pemkey) {
-    BIO* keybio;
-    RSA* pubkey;
-    EVP_PKEY* retval;
+TO_PEM
 
-    keybio = BIO_new_mem_buf((void *) pemkey, -1);
-    if (keybio == NULL) {
-        croak("BIO_new_mem_buf failed");
-    }
+=item I<get_modulus()>
 
-    pubkey = PEM_read_bio_RSA_PUBKEY(keybio, NULL, NULL, NULL);
-    BIO_free(keybio);
-    if (pubkey == NULL) {
-            sslcroak("unable to parse RSA public key");
-    }
+Returns the modulus of this I<Crypt::OpenSSL::CA::PublicKey> instance,
+assuming that it is an RSA or DSA key.  This is similar to the output
+of C<openssl x509 -modulus>, except that the leading C<Modulus=>
+identifier is trimmed and the returned string is not
+newline-terminated.
 
-    retval = EVP_PKEY_new();
-    if (! retval) {
-        RSA_free(pubkey);
-        croak("Not enough memory for EVP_PKEY_new");
-    }
+=cut
 
-    if (! EVP_PKEY_assign_RSA(retval, pubkey)) {
-        RSA_free(pubkey);
-        EVP_PKEY_free(retval);
-        sslcroak("EVP_PKEY_assign_RSA failed");
-    }
-
-    return perl_wrap("${\__PACKAGE__}", retval);
-}
+use Crypt::OpenSSL::CA::Inline::C <<"GET_MODULUS";
 
 static
 SV* get_modulus(SV* obj) {
@@ -558,13 +591,28 @@ SV* get_modulus(SV* obj) {
             croak("Unknown public key type %d", self->type);
     }
 
-    printstatus = printstatus && BIO_write(mem, "\\0", 1);
+    printstatus = printstatus && ( BIO_write(mem, "\\0", 1) > 0 );
     if (! printstatus) {
         BIO_free(mem);
         sslcroak("Serializing modulus failed");
     }
     return BIO_mem_to_SV(mem);
 }
+
+GET_MODULUS
+
+=item I<get_openssl_keyid()>
+
+Returns a cryptographic hash over this public key, as OpenSSL's
+C<subjectKeyIdentifier=hash> configuration directive to C<openssl ca>
+would compute it for a certificate that contains this key.  The return
+value is a string of colon-separated pairs of uppercase hex digits,
+adequate e.g. for passing as the $value parameter to
+L</set_extension>.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"GET_OPENSSL_KEYID";
 
 static
 SV* get_openssl_keyid(SV* obj) {
@@ -619,12 +667,7 @@ end:
     return openssl_string_to_SV(hash_hex);
 }
 
-static
-void DESTROY(SV* obj) {
-    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj));
-}
-
-PUBLICKEY_CODE
+GET_OPENSSL_KEYID
 
 =back
 
@@ -639,6 +682,20 @@ I<Crypt::OpenSSL::CA::PrivateKey> objects are immutable.
 
 package Crypt::OpenSSL::CA::PrivateKey;
 use Carp qw(croak);
+
+use Crypt::OpenSSL::CA::Inline::C <<"PRIVATEKEY_BASE";
+#include <openssl/pem.h>
+#include <openssl/bio.h>
+#include <openssl/engine.h>
+#include <openssl/ui.h>
+#include <openssl/evp.h>
+
+static
+void DESTROY(SV* obj) {
+    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj));
+}
+
+PRIVATEKEY_BASE
 
 =item I<parse($pemkey, %named_options)>
 
@@ -683,21 +740,9 @@ as undef.
 
 =end internals
 
-=item I<get_public_key()>
-
-Returns the public key associated with this
-I<Crypt::OpenSSL::CA::PrivateKey> instance, as an
-L</Crypt::OpenSSL::CA::PublicKey> object.
-
 =cut
 
-use Crypt::OpenSSL::CA::Inline::C <<"PRIVATEKEY_CODE";
-#include <openssl/pem.h>
-#include <openssl/bio.h>
-#include <openssl/engine.h>
-#include <openssl/ui.h>
-#include <openssl/evp.h>
-
+use Crypt::OpenSSL::CA::Inline::C <<"_PARSE";
 /* Returns a password stored in memory.  Callback invoked by
    PEM_read_bio_PrivateKey() when parsing a password-protected
    software private key */
@@ -759,7 +804,17 @@ SV* _parse(char *class, const char* pemkey, SV* svpass,
     }
     return perl_wrap("${\__PACKAGE__}", pkey);
 }
+_PARSE
 
+=item I<get_public_key()>
+
+Returns the public key associated with this
+I<Crypt::OpenSSL::CA::PrivateKey> instance, as an
+L</Crypt::OpenSSL::CA::PublicKey> object.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"GET_PUBLIC_KEY";
 static
 SV* get_public_key(SV* obj) {
     EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj);
@@ -783,25 +838,20 @@ SV* get_public_key(SV* obj) {
     return perl_wrap("Crypt::OpenSSL::CA::PublicKey", retval);
 }
 
-static
-void DESTROY(SV* obj) {
-    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj));
-}
-
-PRIVATEKEY_CODE
+GET_PUBLIC_KEY
 
 =begin OBSOLETE
 
 =item I<get_RSA_modulus()>
 
-For compatibility with 0.03. Use ->get_public_key->get_RSA_modulus
+For compatibility with 0.03. Use ->get_public_key->get_modulus
 instead.
 
 =end OBSOLETE
 
 =cut
 
-sub get_RSA_modulus { shift->get_public_key->get_RSA_modulus }
+sub get_RSA_modulus { shift->get_public_key->get_modulus }
 
 =back
 
@@ -814,6 +864,17 @@ This package models the C<ENGINE_*> functions of OpenSSL.
 =cut
 
 package Crypt::OpenSSL::CA::ENGINE;
+
+#use Crypt::OpenSSL::CA::Inline::C <<"ENGINE_BASE";
+(undef) = <<"ENGINE_BASE";
+#include <openssl/engine.h>
+
+static
+void DESTROY(SV* obj) {
+        ENGINE_free(perl_unwrap("${\__PACKAGE__}", ENGINE *, obj));
+}
+
+ENGINE_BASE
 
 =over
 
@@ -837,8 +898,6 @@ fuss.
 
 #use Crypt::OpenSSL::CA::Inline::C <<"ENGINE_CODE";
 (undef) = <<"ENGINE_CODE";
-#include <openssl/engine.h>
-
 static
 SV* setup_simple(const char *engine, int debug) {
     ENGINE *e = NULL;
@@ -865,13 +924,6 @@ SV* setup_simple(const char *engine, int debug) {
     return perl_wrap("${\__PACKAGE__}", e);
 }
 
-static
-void DESTROY(SV* obj) {
-        ENGINE_free(perl_unwrap("${\__PACKAGE__}", ENGINE *, obj));
-}
-
-
-
 ENGINE_CODE
 
 =back
@@ -894,26 +946,7 @@ L</add_extension> totally shadows the use of this class.
 
 package Crypt::OpenSSL::CA::CONF;
 
-=item I<new($confighash)>
-
-Creates the configuration file data structure.  C<$confighash>
-parameter is a reference to a hash of hashes; the first-level keys are
-section names, and the second-level keys are parameter names.  Returns
-an immutable object of class I<Crypt::OpenSSL::CA::CONF>.
-
-=item I<get_string($section, $key)>
-
-Calls OpenSSL's C<CONF_get_string>.  Throws an exception as described
-in L</Error Management> if the configuration entry is not found.
-Unused in I<Crypt::OpenSSL::CA>, for test purposes only.
-
-=item I<DESTROY()>
-
-Deallocates the whole CONF structure, including all that it contains.
-
-=cut
-
-use Crypt::OpenSSL::CA::Inline::C <<"CONF_CODE";
+use Crypt::OpenSSL::CA::Inline::C <<"CONF_BASE";
 #include <openssl/conf.h>
 /* (Sigh) There appears to be no public way of filling out a CONF*
    structure, except using the contents of a config file (in memory
@@ -921,6 +954,23 @@ use Crypt::OpenSSL::CA::Inline::C <<"CONF_CODE";
 #include <openssl/conf_api.h>
 #include <string.h>           /* for strlen */
 
+static
+void DESTROY(SV* sv_self) {
+    NCONF_free(perl_unwrap("${\__PACKAGE__}", CONF *, sv_self));
+}
+
+CONF_BASE
+
+=item I<new($confighash)>
+
+Creates the configuration file data structure.  C<$confighash>
+parameter is a reference to a hash of hashes; the first-level keys are
+section names, and the second-level keys are parameter names.  Returns
+an immutable object of class I<Crypt::OpenSSL::CA::CONF>.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"NEW";
 static
 SV* new(SV* class, SV* configref) {
     CONF* self;
@@ -994,6 +1044,17 @@ SV* new(SV* class, SV* configref) {
 
     return perl_wrap("${\__PACKAGE__}", self);
 }
+NEW
+
+=item I<get_string($section, $key)>
+
+Calls OpenSSL's C<CONF_get_string>.  Throws an exception as described
+in L</Error Management> if the configuration entry is not found.
+Unused in I<Crypt::OpenSSL::CA>, for test purposes only.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"GET_STRING";
 
 static
 SV* get_string(SV* sv_self, char* section, char* key) {
@@ -1005,12 +1066,7 @@ SV* get_string(SV* sv_self, char* section, char* key) {
     return newSVpv(retval, 0);
 }
 
-static
-void DESTROY(SV* sv_self) {
-    NCONF_free(perl_unwrap("${\__PACKAGE__}", CONF *, sv_self));
-}
-
-CONF_CODE
+GET_STRING
 
 =back
 
@@ -1023,16 +1079,28 @@ L</add_extension>.  They are immutable.
 Like L</Crypt::OpenSSL::CA::CONF>, this POD section is not made
 visible in the man pages (for now), as L</add_extension> totally
 shadows the use of this class.  Furthermore, the API of this class
-just stinks from a Perl's hacker point of view.  Granted, the only
-point of this class is to have several constructors, so as to
-introduce polymorphism into ->_do_add_extension without overflowing
-its argument list in an even more inelegant fashion.
+stinks from a Perl's hacker point of view (mainly because of the
+positional parameters).  Granted, the only point of this class is to
+have several constructors, so as to introduce polymorphism into
+->_do_add_extension without overflowing its argument list in an even
+more inelegant fashion.
 
 =over
 
 =cut
 
 package Crypt::OpenSSL::CA::X509V3_EXT;
+
+use Crypt::OpenSSL::CA::Inline::C <<"X509V3_EXT_BASE";
+#include <openssl/x509v3.h>
+
+static
+void DESTROY(SV* sv_self) {
+    X509_EXTENSION_free(perl_unwrap("${\__PACKAGE__}",
+                                    X509_EXTENSION *, sv_self));
+}
+
+X509V3_EXT_BASE
 
 =item I<new_from_X509V3_EXT_METHOD($X509, $nid, $value, $CONF)>
 
@@ -1055,52 +1123,9 @@ L</Crypt::OpenSSL::CA::X509>, that we'll be adding the extension to:
 we need it as part of the C<X509V3_CTX>, e.g. to resolve constructs
 such as C<< ->add_extension(subjectKeyIdentifier => "hash") >>.
 
-=item I<new_authorityKeyIdentifier_keyid($keyid)>
-
-Creates an returns an X509V3 authorityKeyIdentifier extension
-utilizing only the C<keyIdentifier> production of RFC3280 section
-4.2.1.1, with the value set to $keyid, a string of colon-separated
-pairs of uppercase hex digits typically obtained using
-L</get_subject_keyid> or L</get_openssl_keyid>.  Optionally $keyid may
-be prefixed with the string "critical,", just like $value in
-L</new_from_X509V3_EXT_METHOD>.  This extension is adequate both for
-certificates and CRLs.
-
-Oddly enough, such a construct is not possible using
-L</new_from_X509V3_EXT_METHOD>: OpenSSL does not support storing a
-literal value in the configuration file for C<authorityKeyIdentifier>,
-it only supports copying it from the CA certificate (whereas we don't
-want to insist on the user of I<Crypt::OpenSSL::CA> having said CA
-certificate at hand).
-
-Also note that identifying the authority key by issuer name and serial
-number (the other option discussed in RFC3280 section 4.2.1.1) is
-frowned upon in L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>, and
-therefore not yet supported by I<Crypt::OpenSSL::CA> (L</PATCHES
-WELCOME> though).
-
-=item I<new_CRL_serial($critical, $oid, $serial)>
-
-This constructor implements the C<crlNumber> and C<deltaCRLIndicator>
-CRL extensions as described in L</Crypt::OpenSSL::CA::X509_CRL>.
-$critical is the criticality flag, as integer (to be interpreted as a
-Boolean).  $oid is the extension's OID, as a dot-separated sequence of
-decimal integers.  $serial is a serial number with the same syntax as
-described in L</set_serial>.
-
-=item I<new_freshestCRL($value, $CONF)>
-
-This constructor implements the C<freshestCRL> CRL extension, as
-described in L</Crypt::OpenSSL::CA::X509_CRL>. The parameters
-C<$value> and C<$CONF> work the same as in
-L</new_from_X509V3_EXT_METHOD>, including the criticality-in-$value
-trick.
-
 =cut
 
-use Crypt::OpenSSL::CA::Inline::C <<"X509V3_EXT_CODE";
-#include <openssl/x509v3.h>
-
+use Crypt::OpenSSL::CA::Inline::C <<"NEW_FROM_X509V3_EXT_METHOD";
 static
 SV* new_from_X509V3_EXT_METHOD(SV* class,
                      SV* sv_x509, int nid, char* value, SV* sv_config) {
@@ -1125,50 +1150,129 @@ SV* new_from_X509V3_EXT_METHOD(SV* class,
     return perl_wrap("${\__PACKAGE__}", self);
 }
 
-static
-SV* new_authorityKeyIdentifier_keyid(SV* class, char* keyid) {
-    X509V3_CTX ctx;
-    X509_EXTENSION* self;
-    X509_EXTENSION* tmp;
-    X509* fake_issuer_cert = NULL;
+NEW_FROM_X509V3_EXT_METHOD
 
-    if (! keyid) { croak("keyid is mandatory"); }
+=item I<< new_authorityKeyIdentifier(critical => $critical,
+          keyid => $keyid, issuer => $issuerobj,
+          serial => $serial_hexstring) >>
 
-    /* Constructing the X509_EXTENSION object by hand is just too
-     * much of a PITA, so we fake having an issuer certificate :-P. */
+Creates and returns an X509V3 authorityKeyIdentifier extension as per
+RFC3280 section 4.2.1.1, with the keyid set to $keyid (if not undef)
+and the issuer and serial set to $issuer and $serial, respectively (if
+both are not undef).  This extension is adequate both for certificates
+and CRLs.  Oddly enough, such a construct is not possible using
+L</new_from_X509V3_EXT_METHOD>: OpenSSL does not support storing a
+literal value in the configuration file for C<authorityKeyIdentifier>,
+it only supports copying it from the CA certificate (whereas we don't
+want to insist on the user of I<Crypt::OpenSSL::CA> having said CA
+certificate at hand).
 
-    if (! (fake_issuer_cert = X509_new())) {
-        croak("X509_new failed");
+$critical is a boolean indicating whether the extension should be
+marked critical.  $keyid (if defined) is a string of colon-separated
+pairs of uppercase hex digits typically obtained using
+L</get_subject_keyid> or L</get_openssl_keyid>.  $issuerobj (if
+defined) is an L</Crypt::OpenSSL::CA::X509_NAME> object.
+$serial_hexstring (if defined) is a scalar containing a lowercase,
+hexadecimal string that starts with "0x".
+
+Note that identifying the authority key by issuer name and serial
+number (that is, passing non-undef values for $issuerobj and
+$serial_hexstring) is frowned upon in
+L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>.
+
+=cut
+
+{
+    my $fake_pubkey;
+
+    sub new_authorityKeyIdentifier {
+        $fake_pubkey ||=
+            Crypt::OpenSSL::CA::PublicKey->parse_RSA(<<"RSA_32BIT");
+-----BEGIN PUBLIC KEY-----
+MCAwDQYJKoZIhvcNAQEBBQADDwAwDAIFAM7azvECAwEAAQ==
+-----END PUBLIC KEY-----
+RSA_32BIT
+
+        my ($class, %opts) = @_;
+
+        my $fakecert = Crypt::OpenSSL::CA::X509->new($fake_pubkey);
+        my $wants_serial_and_issuer =
+            ($opts{serial} && $opts{issuer}) ? 1 : 0;
+        if ($wants_serial_and_issuer) {
+            $fakecert->set_serial($opts{serial});
+            $fakecert->set_issuer_DN($opts{issuer});
+        }
+        if ($opts{keyid}) {
+            $fakecert->add_extension(subjectKeyIdentifier => $opts{keyid});
+        }
+
+        return $class->_new_authorityKeyIdentifier_from_fake_cert
+            ($fakecert, ($opts{critical} ? 1 : 0),
+             $wants_serial_and_issuer);
     }
+}
+
+=item I<_new_authorityKeyIdentifier_from_fake_cert
+             ($fakecert, $is_critical, $wants_serial_and_issuer)>
+
+Does the job of L</new_authorityKeyIdentifier>: creates an
+C<authorityKeyIdentifier> extension by extracting the keyid, serial
+and issuer information from $fakecert, as OpenSSL would.  $fakecert is
+an L</Crypt::OpenSSL::CA::X509> object that mimics the issuer of the
+certificate with which the returned extension will be fitted; it is
+typcally created on the spot by I<new_authorityKeyIdentifier()>, and
+may be almost completely bogus, as all its fields except the
+aforementioned three are ignored.  $is_critical is 1 or 0, depending
+on whether the extension should be made critical.
+$wants_serial_and_issuer is 1 or 0, depending on whether the C<issuer>
+and C<serial> authority key identifier information should be scavenged
+from $fakecert (by contrast,
+I<_new_authorityKeyIdentifier_from_fake_cert> will always attempt to
+duplicate $fakecert's C<subjectKeyIdentifier>, so if you don't want
+one in the returned extension, simply don't put it there).
+
+This supremely baroque kludge is needed because creating an
+authorityKeyIdentifier X509_EXTENSION ``by hand'' with OpenSSL is
+nothing short of impossible: the AUTHORITY_KEYID ASN.1 structure,
+which would be the ASN.1 value of the extension, is not exported by
+OpenSSL.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"_NEW_AUTHORITYKEYIDENTIFIER_ETC";
+static
+SV* _new_authorityKeyIdentifier_from_fake_cert(SV* class, SV* fakecert_sv,
+                int is_critical, int wants_serial_and_issuer) {
+    X509V3_CTX ctx;
+    X509* fakecert = perl_unwrap("Crypt::OpenSSL::CA::X509",
+                                 X509 *, fakecert_sv);
+    X509_EXTENSION* self;
 
     X509V3_set_ctx_nodb(&ctx);
-    X509V3_set_ctx(&ctx, fake_issuer_cert, fake_issuer_cert, NULL, NULL, 0);
-
-    if (! (tmp = X509V3_EXT_nconf_nid
-                   (NULL, &ctx, NID_subject_key_identifier, keyid)) ) {
-        X509_free(fake_issuer_cert);
-        sslcroak("failed to parse the key identifier");
-    }
-    if (! X509_add_ext(fake_issuer_cert, tmp, -1)) {
-        X509_free(fake_issuer_cert);
-        X509_EXTENSION_free(tmp);
-        sslcroak("X509_add_ext failed");
-    }
+    X509V3_set_ctx(&ctx, fakecert, fakecert, NULL, NULL, 0);
 
     self = X509V3_EXT_nconf_nid(NULL, &ctx, NID_authority_key_identifier,
-                                (strstr(keyid, "critical,") == keyid ?
-                                  "critical,keyid:always" :
-                                  "keyid:always"));
-    X509_free(fake_issuer_cert);
-    X509_EXTENSION_free(tmp);
-
+            (wants_serial_and_issuer ? "keyid,issuer:always" : "keyid"));
     if (!self) {
         sslcroak("failed to copy the key identifier as a new extension");
     }
-
+    X509_EXTENSION_set_critical(self, is_critical ? 1 : 0);
     return perl_wrap("${\__PACKAGE__}", self);
 }
+_NEW_AUTHORITYKEYIDENTIFIER_ETC
 
+=item I<new_CRL_serial($critical, $oid, $serial)>
+
+This constructor implements the C<crlNumber> and C<deltaCRLIndicator>
+CRL extensions as described in L</Crypt::OpenSSL::CA::X509_CRL>.
+$critical is the criticality flag, as integer (to be interpreted as a
+Boolean).  $oid is the extension's OID, as a dot-separated sequence of
+decimal integers.  $serial is a serial number with the same syntax as
+described in L</set_serial>.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"NEW_CRL_SERIAL";
 static
 SV* new_CRL_serial(char* class, int critical, char* oidtxt, char* value) {
     int nid;
@@ -1195,7 +1299,19 @@ SV* new_CRL_serial(char* class, int critical, char* oidtxt, char* value) {
     if (! self) { sslcroak("X509V3_EXT_i2d failed"); }
     return perl_wrap("${\__PACKAGE__}", self);
 }
+NEW_CRL_SERIAL
 
+=item I<new_freshestCRL($value, $CONF)>
+
+This constructor implements the C<freshestCRL> CRL extension, as
+described in L</Crypt::OpenSSL::CA::X509_CRL>. The parameters
+C<$value> and C<$CONF> work the same as in
+L</new_from_X509V3_EXT_METHOD>, including the criticality-in-$value
+trick.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"NEW_FRESHESTCRL";
 static
 SV* new_freshestCRL(char* class, char* value, SV* sv_config) {
     X509V3_CTX ctx;
@@ -1220,13 +1336,7 @@ SV* new_freshestCRL(char* class, char* value, SV* sv_config) {
     return perl_wrap("${\__PACKAGE__}", self);
 }
 
-static
-void DESTROY(SV* sv_self) {
-    X509_EXTENSION_free(perl_unwrap("${\__PACKAGE__}",
-                                    X509_EXTENSION *, sv_self));
-}
-
-X509V3_EXT_CODE
+NEW_FRESHESTCRL
 
 =back
 
@@ -1258,6 +1368,19 @@ instead.
 package Crypt::OpenSSL::CA::X509;
 use Carp qw(croak);
 
+use Crypt::OpenSSL::CA::Inline::C <<"X509_BASE";
+#include <openssl/pem.h>
+#include <openssl/bio.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <openssl/evp.h> /* For EVP_get_digestbyname() */
+#include <openssl/bn.h>  /* For BN_hex2bn in set_serial() */
+static
+void DESTROY(SV* obj) {
+    X509_free(perl_unwrap("${\__PACKAGE__}", X509 *, obj));
+}
+X509_BASE
+
 =back
 
 =head3 Support for OpenSSL-style extensions
@@ -1279,7 +1402,7 @@ that
 =for My::Tests::Below "nice try with set_extension, no cigar" begin
 
    $cert->set_extension("authorityKeyIdentifier",
-                               "keyid:always");          # WRONG!
+                               "keyid:always,issuer:always");  # WRONG!
 
 =for My::Tests::Below "nice try with set_extension, no cigar" end
 
@@ -1289,18 +1412,22 @@ L</Crypt::OpenSSL::CA::X509> provides it in an ad-hoc manner):
 
 =for My::Tests::Below "set_extension authorityKeyIdentifier" begin
 
-  $cert->set_extension(authorityKeyIdentifier_keyid => "00:DE:AD:BE:EF");
+  $cert->set_extension(authorityKeyIdentifier =>
+                          { keyid  => "00:DE:AD:BE:EF",
+                            issuer => $dnobj,
+                            serial => "0x1234abcd" });
 
 =for My::Tests::Below "set_extension authorityKeyIdentifier" end
 
-where the value can be obtained using L</get_openssl_keyid> on the
-CA's public key.
+where the value for C<issuer> is an instance of
+L</Crypt::OpenSSL::CA::X509_NAME>, the value for C<serial> is a scalar
+containing a lowercase, hexadecimal string that starts with "0x", and
+the value for C<keyid> is as returned e.g. by L</get_openssl_keyid>.
 
 On a related matter, identifying the authority key by issuer name and
 serial number, an option that is discussed in RFC3280 section 4.2.1.1,
-is frowned upon in L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>,
-and therefore not yet supported by I<Crypt::OpenSSL::CA>.  L</PATCHES
-WELCOME> though.
+although supported, is frowned upon in
+L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>.
 
 =head3 Constructors and Methods
 
@@ -1316,11 +1443,65 @@ I<set_*> methods in this class. Returns an instance of the class
 I<Crypt::OpenSSL::CA::X509>, wrapping around an OpenSSL C<X509 *>
 handle.
 
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"NEW";
+static
+SV* new(char* class, SV* sv_pubkey) {
+    X509* self;
+    EVP_PKEY* pubkey = perl_unwrap("Crypt::OpenSSL::CA::PublicKey",
+                                   EVP_PKEY *, sv_pubkey);
+    char* err;
+
+    self = X509_new();
+    if (! self) { err = "not enough memory for X509_new"; goto error; }
+    if (! X509_set_version(self, 2))
+        { err = "X509_set_version failed"; goto error; }
+    if (! X509_set_pubkey(self, pubkey))
+        { err = "X509_set_pubkey failed"; goto error; }
+    if (! ASN1_INTEGER_set(X509_get_serialNumber(self), 1))
+        { err = "ASN1_INTEGER_set failed"; goto error; }
+    if (! ASN1_TIME_set(X509_get_notBefore(self), 0))
+        { err = "ASN1_TIME_set failed for notBefore"; goto error; }
+    if (! ASN1_TIME_set(X509_get_notAfter(self), 0))
+        { err = "ASN1_TIME_set failed for notAfter"; goto error; }
+
+    return perl_wrap("${\__PACKAGE__}", self);
+
+ error:
+    if (self) { X509_free(self); }
+    sslcroak(err);
+    return NULL; // Not reached
+}
+NEW
+
 =item I<parse($pemcert)>
 
 Parses a PEM-encoded X509 certificate and returns an instance of
 I<Crypt::OpenSSL::CA::X509> that already has a number of fields set.
 Despite this, the returned object can be L</sign>ed anew if one wants.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"PARSE";
+static
+SV* parse(char *class, const char* pemcert) {
+    BIO* keybio = NULL;
+    X509* retval = NULL;
+
+    keybio = BIO_new_mem_buf((void *) pemcert, -1);
+    if (keybio == NULL) {
+        croak("BIO_new failed");
+    }
+    retval = PEM_read_bio_X509(keybio, NULL, NULL, NULL);
+    BIO_free(keybio);
+
+    if (retval == NULL) {
+            sslcroak("unable to parse certificate");
+    }
+    return perl_wrap("${\__PACKAGE__}", retval);
+}
+PARSE
 
 =item I<get_public_key()>
 
@@ -1330,13 +1511,92 @@ Memory-management wise, this performs a copy of the underlying
 C<EVP_PKEY *> structure; therefore it is safe to destroy this
 certificate object afterwards and keep only the returned public key.
 
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"GET_PUBLIC_KEY";
+static
+SV* get_public_key(SV* obj) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    EVP_PKEY* pkey = X509_get_pubkey(self);
+    if (! pkey) { sslcroak("Huh, no public key in this certificate?!"); }
+
+    return perl_wrap("Crypt::OpenSSL::CA::PublicKey", pkey);
+}
+GET_PUBLIC_KEY
+
 =item I<get_subject_DN()>
 
-Returns the subject DN of this I<Crypt::OpenSSL::CA::X509> instance,
-as an L</Crypt::OpenSSL::CA::X509_NAME> instance.  Memory-management
-wise, this performs a copy of the underlying C<X509_NAME *> structure;
+=item I<get_issuer_DN()>
+
+Returns the subject DN (resp. issuer DN) of this
+I<Crypt::OpenSSL::CA::X509> instance, as an
+L</Crypt::OpenSSL::CA::X509_NAME> instance.  Memory-management wise,
+this performs a copy of the underlying C<X509_NAME *> structure;
 therefore there it is safe to destroy this certificate object
 afterwards and keep only the returned DN.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"GET_DN";
+static
+SV* get_subject_DN(SV* obj) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    X509_NAME* name = X509_get_subject_name(self);
+
+    if (! name) { sslcroak("Huh, no subject name in certificate?!"); }
+
+    name = X509_NAME_dup(name);
+    if (! name) { croak("Not enough memory for get_subject_DN"); }
+
+    return perl_wrap("Crypt::OpenSSL::CA::X509_NAME", name);
+}
+
+static
+SV* get_issuer_DN(SV* obj) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    X509_NAME* name = X509_get_issuer_name(self);
+
+    if (! name) { sslcroak("Huh, no issuer name in certificate?!"); }
+
+    name = X509_NAME_dup(name);
+    if (! name) { croak("Not enough memory for get_issuer_DN"); }
+
+    return perl_wrap("Crypt::OpenSSL::CA::X509_NAME", name);
+}
+GET_DN
+
+
+=item I<set_subject_DN($dn_object)>
+
+=item I<set_issuer_DN($dn_object)>
+
+Sets the subject and issuer DNs from L</Crypt::OpenSSL::CA::X509_NAME>
+objects.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"SET_DN";
+static
+void set_subject_DN(SV* obj, SV* dn_object) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
+                                X509_NAME *, dn_object);
+    if (! X509_set_subject_name(self, dn)) {
+        sslcroak("X509_set_subject_name failed");
+    }
+}
+
+static
+void set_issuer_DN(SV* obj, SV* dn_object) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
+                                X509_NAME *, dn_object);
+    if (! X509_set_issuer_name(self, dn)) {
+        sslcroak("X509_set_issuer_name failed");
+    }
+}
+
+SET_DN
 
 =item I<get_subject_keyid()>
 
@@ -1346,25 +1606,215 @@ such extension is available, returns undef.  Depending on the whims of
 the particular CA that signed this certificate, this may or may not be
 the same as C<< $self->get_public_key->get_openssl_keyid >>.
 
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"GET_SUBJECT_KEYID";
+static
+SV* get_subject_keyid(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
+    X509_EXTENSION *ext;
+    ASN1_OCTET_STRING *ikeyid;
+    char* retval;
+    int i;
+
+    i = X509_get_ext_by_NID(self, NID_subject_key_identifier, -1);
+    if (i < 0) {
+        return newSVsv(&PL_sv_undef);
+    }
+    if (! ((ext = X509_get_ext(self, i)) &&
+           (ikeyid = X509V3_EXT_d2i(ext))) ) {
+        sslcroak("Failed extracting subject keyID from certificate");
+        return NULL; /* Not reached */
+    }
+    retval = i2s_ASN1_OCTET_STRING(NULL, ikeyid);
+    ASN1_OCTET_STRING_free(ikeyid);
+    if (! retval) { croak("Converting to hex failed"); }
+    return openssl_string_to_SV(retval);
+}
+
+GET_SUBJECT_KEYID
+
+=item I<get_serial()>
+
+Returns the serial number as a scalar containing a lowercase,
+hexadecimal string that starts with "0x".
+
 =item I<set_serial($serial_hexstring)>
 
 Sets the serial number to C<$serial_hexstring>, which must be a scalar
 containing a lowercase, hexadecimal string that starts with "0x".
 
-=item I<set_subject_DN($dn_object)>
+=cut
 
-=item I<set_issuer_DN($dn_object)>
+use Crypt::OpenSSL::CA::Inline::C <<"GET_SET_SERIAL";
+static
+SV* get_serial(SV* obj) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    ASN1_INTEGER* serial_asn1;
+    BIO* mem = BIO_new(BIO_s_mem());
+    int status = 1;
+    int i;
 
-Sets the subject and issuer DNs from L</Crypt::OpenSSL::CA::X509_NAME>
-objects.
+    if (! mem) {
+        croak("Cannot allocate BIO");
+    }
+
+    /* Code inspired from X509_print_ex in OpenSSL's sources */
+    if (! (serial_asn1 = X509_get_serialNumber(self)) ) {
+        BIO_free(mem);
+        sslcroak("X509_get_serialNumber failed");
+    }
+    if (!serial_asn1->type == V_ASN1_NEG_INTEGER) {
+        status = status && ( BIO_puts(mem, "-") > 0 );
+    }
+    status = status && ( BIO_puts(mem, "0x") > 0 );
+    for (i=0; i<serial_asn1->length; i++) {
+        status = status &&
+            (BIO_printf(mem, "%02x", serial_asn1->data[i]) > 0);
+    }
+    status = status && ( BIO_write(mem, "\\0", 1) > 0 );
+    if (! status) {
+        BIO_free(mem);
+        croak("Could not pretty-print serial number");
+    }
+    return BIO_mem_to_SV(mem);
+}
+
+static
+void set_serial(SV* obj, char* serial_hexstring) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    ASN1_INTEGER* serial_asn1;
+    int status;
+
+    serial_asn1 = parse_serial_or_croak(serial_hexstring);
+    status = X509_set_serialNumber(self, serial_asn1);
+    ASN1_INTEGER_free(serial_asn1);
+    if (! status) { sslcroak("X509_set_serialNumber failed"); }
+}
+
+
+/* OBSOLETE because set_serial_hex lacks the ability to evolve
+   to support other serial number formats in the future. Use
+   L</set_serial> instead with a 0x prefix.  */
+static
+void set_serial_hex(SV* obj, char* serial_hexstring) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    ASN1_INTEGER* serial_asn1;
+    BIGNUM* serial = NULL;
+
+    if (! BN_hex2bn(&serial, serial_hexstring)) {
+        sslcroak("BN_hex2bn failed");
+    }
+    if (! BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(self))) {
+        BN_free(serial);
+        sslcroak("BN_to_ASN1_INTEGER failed");
+    }
+    BN_free(serial);
+}
+GET_SET_SERIAL
+
+=item I<get_notBefore()>
 
 =item I<set_notBefore($startdate)>
 
+=item I<get_notAfter()>
+
 =item I<set_notAfter($enddate)>
 
-Sets the validity period of the certificate.  The dates must be in the
-GMT timezone, with the format yyyymmddhhmmssZ (it's a literal Z at the
-end, meaning "Zulu" in case you care).
+Get or set the validity period of the certificate.  The dates are in
+the GMT timezone, with the format yyyymmddhhmmssZ (it's a literal Z at
+the end, meaning "Zulu" in case you care).
+
+=cut
+
+sub _zuluize {
+    my ($time) = @_;
+    croak "UNIMPLEMENTED" if ($time !~ m/Z$/);
+    if (length($time) eq length("YYYYMMDDHHMMSSZ")) {
+        return $time;
+    } elsif (length($time) eq length("YYMMDDHHMMSSZ")) {
+        # RFC2480 § 4.1.2.5.1
+        return ($time =~ m/^[5-9]/ ? "19" : "20") . $time;
+    } else {
+        croak "Bad time format $time";
+    }
+}
+
+sub get_notBefore { _zuluize(_get_notBefore_raw(@_)) }
+sub get_notAfter { _zuluize(_get_notAfter_raw(@_)) }
+
+use Crypt::OpenSSL::CA::Inline::C <<"GET_SET_DATES";
+static
+SV* _get_notBefore_raw(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
+    if (! X509_get_notBefore(self)) { return Nullsv; }
+    return newSVpv((char *)X509_get_notBefore(self)->data,
+                   X509_get_notBefore(self)->length);
+}
+
+static
+SV* _get_notAfter_raw(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
+    if (! X509_get_notAfter(self)) { return Nullsv; }
+    return newSVpv((char *)X509_get_notAfter(self)->data,
+                   X509_get_notAfter(self)->length);
+}
+
+static
+void set_notBefore(SV* sv_self, char* startdate) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(startdate);
+    X509_set_notBefore(self, time);
+    ASN1_TIME_free(time);
+}
+
+static
+void set_notAfter(SV* sv_self, char* enddate) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(enddate);
+    X509_set_notAfter(self, time);
+    ASN1_TIME_free(time);
+}
+GET_SET_DATES
+
+=item I<extension_by_name($extname)>
+
+Returns true if and only if $extname is a valid X509v3 certificate
+extension, susceptible of being passed to L</set_extension> and
+friends.
+
+=begin internal
+
+Specifically, returns the OpenSSL NID associated with
+$extname, as an integer.
+
+=end internal
+
+=cut
+
+# This one is callable from both Perl and C, kewl!
+use Crypt::OpenSSL::CA::Inline::C << "EXTENSION_BY_NAME";
+static
+int extension_by_name(SV* unused, char* extname) {
+    int nid;
+    X509V3_EXT_METHOD* method;
+
+    if (! extname) { return 0; }
+    nid = OBJ_txt2nid(extname);
+
+    if (! nid) { return 0; }
+    if (! (method = X509V3_EXT_get_nid(nid)) ) { return 0; }
+
+    /* Extensions that cannot be created are obviously not supported. */
+    if (! (method->v2i || method->s2i || method->r2i) ) { return 0; }
+    /* This is also how we check whether this extension is for
+       certificates or for CRLs: there is no support for creating
+       them!  FIXME: when CRL extension support finally gets added to
+       OpenSSL, we'll have to change that. */
+
+    return nid;
+}
+EXTENSION_BY_NAME
 
 =item I<set_extension($extname, $value, %options, %more_openssl_config)>
 
@@ -1386,9 +1836,9 @@ becomes
 =for My::Tests::Below "set_extension subjectKeyIdentifier" end
 
 Actually I<set_extension()> interprets a few ($extname, $value) pairs
-that are B<not> understood by stock OpenSSL, most notably C<< $extname
-= "authorityKeyIdentifier_keyid" >>.  See the complete discussion in
-L</Support for OpenSSL-style extensions>.
+that are B<not> understood by stock OpenSSL, most notably C<$extname =
+authorityKeyIdentifier>.  See the complete discussion in L</Support
+for OpenSSL-style extensions>.
 
 The rest of the arguments are interpreted as a list of key-value
 pairs.  Those that start with a hyphen are named options; they are
@@ -1439,7 +1889,8 @@ sub set_extension {
     my ($self, $extname, @stuff) = @_;
     my $real_extname = $extname;
     $real_extname = "authorityKeyIdentifier" if
-        ($extname =~ m/^authorityKeyIdentifier/i);
+        ($extname =~ m/^authorityKeyIdentifier/i); # OBSOLETE support
+    # for authorityKeyIdentifier_keyid as was present in 0.04
     $self->remove_extension($real_extname);
     $self->add_extension($extname, @stuff);
 }
@@ -1481,10 +1932,16 @@ sub add_extension {
         # Other named options may be added later.
     }
 
-    my $ext;
+    # OBSOLETE, for compatibility only:
     if ($extname eq "authorityKeyIdentifier_keyid") {
+        $extname = "authorityKeyIdentifier";
+        $value = { keyid => $value };
+    }
+
+    my $ext;
+    if ($extname eq "authorityKeyIdentifier") {
         $ext = Crypt::OpenSSL::CA::X509V3_EXT->
-            new_authorityKeyIdentifier_keyid("$critical$value");
+            new_authorityKeyIdentifier(critical => $critical, %$value);
     } elsif (my $nid = $self->extension_by_name($extname)) {
         $ext = Crypt::OpenSSL::CA::X509V3_EXT->new_from_X509V3_EXT_METHOD
             ($self, $nid, "$critical$value",
@@ -1501,233 +1958,9 @@ sub add_extension {
 
 Removes any and all extensions named $extname in this certificate.
 
-=begin internals
-
-=item I<_do_add_extension($extension)>
-
-Does the actual job of L</add_extension>, sans all the syntactic
-sugar. $extension is an instance of
-L</Crypt::OpenSSL::CA::X509V3_EXT>.
-
-=end internals
-
-=item I<dump()>
-
-Returns a textual representation of all the fields inside the
-(unfinished) certificate.  This is done using OpenSSL's
-C<X509_print()>.
-
-=item I<sign($privkey, $digestname)>
-
-Signs the certificate (TADA!!).  C<$privkey> is an instance of
-L</Crypt::OpenSSL::CA::PrivateKey>; C<$digestname> is the name of one
-of cryptographic digests supported by OpenSSL, e.g. "sha1" or "sha256"
-(notice that using "md5" is B<strongly discouraged> due to security
-considerations; see
-L<http://www.win.tue.nl/~bdeweger/CollidingCertificates/>).  Returns
-the PEM-encoded certificate as a string.
-
 =cut
 
-use Crypt::OpenSSL::CA::Inline::C <<"X509_CODE";
-#include <openssl/pem.h>
-#include <openssl/bio.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
-#include <openssl/evp.h> /* For EVP_get_digestbyname() */
-#include <openssl/bn.h>  /* For BN_hex2bn in set_serial() */
-
-static
-SV* new(char* class, SV* sv_pubkey) {
-    X509* self;
-    EVP_PKEY* pubkey = perl_unwrap("Crypt::OpenSSL::CA::PublicKey",
-                                   EVP_PKEY *, sv_pubkey);
-    char* err;
-
-    self = X509_new();
-    if (! self) { err = "not enough memory for X509_new"; goto error; }
-    if (! X509_set_version(self, 2))
-        { err = "X509_set_version failed"; goto error; }
-    if (! X509_set_pubkey(self, pubkey))
-        { err = "X509_set_pubkey failed"; goto error; }
-    if (! ASN1_INTEGER_set(X509_get_serialNumber(self), 1))
-        { err = "ASN1_INTEGER_set failed"; goto error; }
-    if (! ASN1_TIME_set(X509_get_notBefore(self), 0))
-        { err = "ASN1_TIME_set failed for notBefore"; goto error; }
-    if (! ASN1_TIME_set(X509_get_notAfter(self), 0))
-        { err = "ASN1_TIME_set failed for notAfter"; goto error; }
-
-    return perl_wrap("${\__PACKAGE__}", self);
-
- error:
-    if (self) { X509_free(self); }
-    sslcroak(err);
-    return NULL; // Not reached
-}
-
-static
-SV* parse(char *class, const char* pemcert) {
-    BIO* keybio = NULL;
-    X509* retval = NULL;
-
-    keybio = BIO_new_mem_buf((void *) pemcert, -1);
-    if (keybio == NULL) {
-        croak("BIO_new failed");
-    }
-    retval = PEM_read_bio_X509(keybio, NULL, NULL, NULL);
-    BIO_free(keybio);
-
-    if (retval == NULL) {
-            sslcroak("unable to parse certificate");
-    }
-    return perl_wrap("${\__PACKAGE__}", retval);
-}
-
-static
-SV* get_public_key(SV* obj) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    EVP_PKEY* pkey = X509_get_pubkey(self);
-    if (! pkey) { sslcroak("Huh, no public key in this certificate?!"); }
-
-    return perl_wrap("Crypt::OpenSSL::CA::PublicKey", pkey);
-}
-
-static
-SV* get_subject_DN(SV* obj) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    X509_NAME* name = X509_get_subject_name(self);
-
-    if (! name) { sslcroak("Huh, no subject name in certificate?!"); }
-
-    name = X509_NAME_dup(name);
-    if (! name) { croak("Not enough memory for get_subject_DN"); }
-
-    return perl_wrap("Crypt::OpenSSL::CA::X509_NAME", name);
-}
-
-static
-SV* get_subject_keyid(SV* sv_self) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
-    X509_EXTENSION *ext;
-    ASN1_OCTET_STRING *ikeyid;
-    char* retval;
-    int i;
-
-    i = X509_get_ext_by_NID(self, NID_subject_key_identifier, -1);
-    if (i < 0) {
-        return newSVsv(&PL_sv_undef);
-    }
-    if (! ((ext = X509_get_ext(self, i)) &&
-           (ikeyid = X509V3_EXT_d2i(ext))) ) {
-        sslcroak("Failed extracting subject keyID from certificate");
-        return NULL; /* Not reached */
-    }
-    retval = i2s_ASN1_OCTET_STRING(NULL, ikeyid);
-    ASN1_OCTET_STRING_free(ikeyid);
-    if (! retval) { croak("Converting to hex failed"); }
-    return openssl_string_to_SV(retval);
-}
-
-static
-void set_serial(SV* obj, char* serial_hexstring) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    ASN1_INTEGER* serial_asn1;
-    int status;
-
-    serial_asn1 = parse_serial_or_croak(serial_hexstring);
-    status = X509_set_serialNumber(self, serial_asn1);
-    ASN1_INTEGER_free(serial_asn1);
-    if (! status) { sslcroak("X509_set_serialNumber failed"); }
-}
-
-/* DEPRECATED because set_serial_hex lacks the ability to evolve
-   to support other serial number formats in the future. Use
-   L</set_serial> instead with a 0x prefix.  */
-static
-void set_serial_hex(SV* obj, char* serial_hexstring) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    ASN1_INTEGER* serial_asn1;
-    BIGNUM* serial = NULL;
-
-    if (! BN_hex2bn(&serial, serial_hexstring)) {
-        sslcroak("BN_hex2bn failed");
-    }
-    if (! BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(self))) {
-        BN_free(serial);
-        sslcroak("BN_to_ASN1_INTEGER failed");
-    }
-    BN_free(serial);
-}
-
-static
-void set_subject_DN(SV* obj, SV* dn_object) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
-                                X509_NAME *, dn_object);
-    if (! X509_set_subject_name(self, dn)) {
-        sslcroak("X509_set_subject_name failed");
-    }
-}
-
-static
-void set_issuer_DN(SV* obj, SV* dn_object) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
-                                X509_NAME *, dn_object);
-    if (! X509_set_issuer_name(self, dn)) {
-        sslcroak("X509_set_issuer_name failed");
-    }
-}
-
-static
-void set_notBefore(SV* obj, char* startdate) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    ASN1_TIME* time = parse_RFC3280_time_or_croak(startdate);
-    X509_set_notBefore(self, time);
-    ASN1_TIME_free(time);
-}
-
-static
-void set_notAfter(SV* obj, char* enddate) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    ASN1_TIME* time = parse_RFC3280_time_or_croak(enddate);
-    X509_set_notAfter(self, time);
-    ASN1_TIME_free(time);
-}
-
-/* This one is callable from both Perl and C, kewl! */
-static
-int extension_by_name(SV* unused, char* extname) {
-    int nid;
-    X509V3_EXT_METHOD* method;
-
-    if (! extname) { return 0; }
-    nid = OBJ_txt2nid(extname);
-
-    if (! nid) { return 0; }
-    if (! (method = X509V3_EXT_get_nid(nid)) ) { return 0; }
-
-    /* Extensions that cannot be created are obviously not supported. */
-    if (! (method->v2i || method->s2i || method->r2i) ) { return 0; }
-    /* This is also how we check whether this extension is for
-       certificates or for CRLs: there is no support for creating
-       them!  FIXME: when CRL extension support finally gets added to
-       OpenSSL, we'll have to change that. */
-
-    return nid;
-}
-
-static
-void _do_add_extension(SV* obj, SV* sv_extension) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
-    X509_EXTENSION *ex = perl_unwrap("Crypt::OpenSSL::CA::X509V3_EXT",
-                                     X509_EXTENSION *, sv_extension);
-
-    if (! X509_add_ext(self, ex, -1)) {
-        sslcroak("X509_add_ext failed");
-    }
-}
-
+use Crypt::OpenSSL::CA::Inline::C <<"REMOVE_EXTENSION";
 static
 void remove_extension(SV* obj, char* key) {
     X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
@@ -1744,7 +1977,42 @@ void remove_extension(SV* obj, char* key) {
         X509_EXTENSION_free(deleted);
     }
 }
+REMOVE_EXTENSION
 
+=begin internals
+
+=item I<_do_add_extension($extension)>
+
+Does the actual job of L</add_extension>, sans all the syntactic
+sugar. $extension is an instance of
+L</Crypt::OpenSSL::CA::X509V3_EXT>.
+
+=end internals
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"DO_ADD_EXTENSION";
+static
+void _do_add_extension(SV* obj, SV* sv_extension) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+    X509_EXTENSION *ex = perl_unwrap("Crypt::OpenSSL::CA::X509V3_EXT",
+                                     X509_EXTENSION *, sv_extension);
+
+    if (! X509_add_ext(self, ex, -1)) {
+        sslcroak("X509_add_ext failed");
+    }
+}
+DO_ADD_EXTENSION
+
+=item I<dump()>
+
+Returns a textual representation of all the fields inside the
+(unfinished) certificate.  This is done using OpenSSL's
+C<X509_print()>.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"DUMP";
 static
 SV* dump(SV* obj) {
     X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
@@ -1754,13 +2022,27 @@ SV* dump(SV* obj) {
         croak("Cannot allocate BIO");
     }
 
-    if (! (X509_print(mem, self) && BIO_write(mem, "\\0", 1)) ) {
+    if (! (X509_print(mem, self) && ( BIO_write(mem, "\\0", 1) > 0)) ) {
         sslcroak("X509_print failed");
     }
 
     return BIO_mem_to_SV(mem);
 }
+DUMP
 
+=item I<sign($privkey, $digestname)>
+
+Signs the certificate (TADA!!).  C<$privkey> is an instance of
+L</Crypt::OpenSSL::CA::PrivateKey>; C<$digestname> is the name of one
+of cryptographic digests supported by OpenSSL, e.g. "sha1" or "sha256"
+(notice that using "md5" is B<strongly discouraged> due to security
+considerations; see
+L<http://www.win.tue.nl/~bdeweger/CollidingCertificates/>).  Returns
+the PEM-encoded certificate as a string.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"SIGN";
 static
 SV* sign(SV* obj, SV* privkey, char* digestname) {
     X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
@@ -1781,20 +2063,15 @@ SV* sign(SV* obj, SV* privkey, char* digestname) {
     if (! (mem = BIO_new(BIO_s_mem()))) {
         croak("Cannot allocate BIO");
     }
-    if (! (PEM_write_bio_X509(mem, self) && BIO_write(mem, "\\0", 1)) ) {
+    if (! (PEM_write_bio_X509(mem, self) &&
+           (BIO_write(mem, "\\0", 1) > 0)) ) {
         BIO_free(mem);
         croak("Serializing certificate failed");
     }
     return BIO_mem_to_SV(mem);
 }
 
-static
-void DESTROY(SV* obj) {
-    X509_free(perl_unwrap("${\__PACKAGE__}", X509 *, obj));
-}
-
-
-X509_CODE
+SIGN
 
 =back
 
@@ -1808,6 +2085,17 @@ This Perl class wraps around OpenSSL's CRL creation features.
 
 package Crypt::OpenSSL::CA::X509_CRL;
 use Carp qw(croak);
+use Crypt::OpenSSL::CA::Inline::C <<"X509_CRL_BASE";
+#include <openssl/pem.h>
+#include <openssl/bio.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+static
+void DESTROY(SV* sv_self) {
+    X509_CRL_free(perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self));
+}
+X509_CRL_BASE
 
 =item I<new()>
 
@@ -1834,10 +2122,36 @@ sub new {
 
 Returns true iff this CRL object was set to CRLv2 at L</new> time.
 
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"IS_CRLV2";
+static
+int is_crlv2(SV* sv_self) {
+    return X509_CRL_get_version
+       (perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self));
+}
+
+IS_CRLV2
+
 =item I<set_issuer_DN($dn_object)>
 
 Sets the CRL's issuer name from an L</Crypt::OpenSSL::CA::X509_NAME>
 object.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"SET_ISSUER_DN";
+
+static
+void set_issuer_DN(SV* sv_self, SV* sv_dn) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
+                                X509_NAME *, sv_dn);
+    if (! X509_CRL_set_issuer_name(self, dn)) {
+        sslcroak("X509_CRL_set_issuer_name failed");
+    }
+}
+SET_ISSUER_DN
 
 =item I<set_lastUpdate($enddate)>
 
@@ -1846,6 +2160,29 @@ object.
 Sets the validity period of the certificate.  The dates must be in the
 GMT timezone, with the format yyyymmddhhmmssZ (it's a literal Z at the
 end, meaning "Zulu" in case you care).
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"SET_UPDATES";
+
+static
+void set_lastUpdate(SV* sv_self, char* startdate) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(startdate);
+    X509_CRL_set_lastUpdate(self, time);
+    ASN1_TIME_free(time);
+}
+
+static
+void set_nextUpdate(SV* sv_self, char* enddate) {
+    ASN1_TIME* newtime;
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+
+    ASN1_TIME* time = parse_RFC3280_time_or_croak(enddate);
+    X509_CRL_set_nextUpdate(self, time);
+    ASN1_TIME_free(time);
+}
+SET_UPDATES
 
 =item I<set_extension($extname, $value, %options, %more_openssl_config)>
 
@@ -1859,7 +2196,7 @@ Recognized CRL extensions are:
 
 =over
 
-=item I<authorityKeyIdentifier_keyid>
+=item I<authorityKeyIdentifier>
 
 Works the same as in L</Crypt::OpenSSL::CA::X509>. Implements RFC3280
 section 5.2.1.
@@ -1893,22 +2230,24 @@ I<Crypt::OpenSSL::CA>.
 
 =cut
 
-sub set_extension {
-    my ($self, $extname, @stuff) = @_;
-    my $real_extname = $extname;
-    $self->remove_extension($real_extname);
-    $self->add_extension($extname, @stuff);
-}
-
-
 use vars qw(%ext2oid %oid2ext);
 # RFC3280 §§ 4.2.1 and 5.2; http://www.alvestrand.no/objectid/2.5.29.html
 %ext2oid = (crlNumber => "2.5.29.20",
             deltaCRLIndicator => "2.5.29.27",
-            authorityKeyIdentifier_keyid => "2.5.29.35",
+            authorityKeyIdentifier => "2.5.29.35",
             freshestCRL => "2.5.29.46",
             );
 %oid2ext = reverse %ext2oid;
+
+sub set_extension {
+    my ($self, $extname, @stuff) = @_;
+    my $real_extname = $extname;
+    $real_extname = "authorityKeyIdentifier" if
+        ($extname =~ m/^authorityKeyIdentifier/i); # OBSOLETE support
+    # for authorityKeyIdentifier_keyid as was present in 0.04
+    $self->remove_extension($real_extname);
+    $self->add_extension($extname, @stuff);
+}
 
 sub add_extension {
     die("incorrect number of arguments to add_extension()")
@@ -1937,10 +2276,16 @@ sub add_extension {
         # Other named options may be added later.
     }
 
-    my $ext;
+    # OBSOLETE, for compatibility only:
     if ($extname eq "authorityKeyIdentifier_keyid") {
+        $extname = "authorityKeyIdentifier";
+        $value = { keyid => $value };
+    }
+
+    my $ext;
+    if ($extname eq "authorityKeyIdentifier") {
         $ext = Crypt::OpenSSL::CA::X509V3_EXT->
-            new_authorityKeyIdentifier_keyid("$critical$value");
+            new_authorityKeyIdentifier(critical => $critical, %$value);
     } elsif ($extname eq "freshestCRL") {
         $ext = Crypt::OpenSSL::CA::X509V3_EXT->
             new_freshestCRL("$critical$value",
@@ -2064,6 +2409,87 @@ considerations; see
 L<http://www.win.tue.nl/~bdeweger/CollidingCertificates/>).  Returns
 the PEM-encoded CRL as a string.
 
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"SIGN";
+static
+SV* sign(SV* sv_self, SV* sv_key, char* digestname) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+    EVP_PKEY* key = perl_unwrap("Crypt::OpenSSL::CA::PrivateKey",
+         EVP_PKEY *, sv_key);
+    const EVP_MD* digest;
+    BIO* mem;
+
+    ensure_openssl_stuff_loaded;
+    if (! (digest = EVP_get_digestbyname(digestname))) {
+        sslcroak("Unknown digest name: %s", digestname);
+    }
+
+    if (! X509_CRL_sort(self)) { sslcroak("X509_CRL_sort failed"); }
+
+    if (! X509_CRL_sign(self, key, digest)) {
+        sslcroak("X509_CRL_sign failed");
+    }
+
+    if (! (mem = BIO_new(BIO_s_mem()))) {
+        croak("Cannot allocate BIO");
+    }
+    if (! (PEM_write_bio_X509_CRL(mem, self) &&
+          (BIO_write(mem, "\\0", 1) > 0)) ) {
+        BIO_free(mem);
+        croak("Serializing certificate failed");
+    }
+    return BIO_mem_to_SV(mem);
+}
+SIGN
+
+=item I<dump()>
+
+Returns a textual representation of all the fields inside the
+(unfinished) CRL.  This is done using OpenSSL's
+C<X509_CRL_print()>.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"DUMP";
+static
+SV* dump(SV* obj) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, obj);
+    BIO* mem = BIO_new(BIO_s_mem());
+
+    if (! mem) {
+        croak("Cannot allocate BIO");
+    }
+
+    if (! (X509_CRL_print(mem, self) &&
+          (BIO_write(mem, "\\0", 1) > 0)) ) {
+        sslcroak("X509_CRL_print failed");
+    }
+
+    return BIO_mem_to_SV(mem);
+}
+DUMP
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionNone>
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionCallIssuer>
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionReject>
+
+=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionPickupToken>
+
+OID constants for the respective hold instructions (see the
+I<-hold_oid> named option in L</add_entry>).  All these functions
+return a string containing a dot-separated sequence of decimal
+integers.
+
+=cut
+
+sub holdInstructionNone        { "1.2.840.10040.2.1" }
+sub holdInstructionCallIssuer  { "1.2.840.10040.2.2" }
+sub holdInstructionReject      { "1.2.840.10040.2.3" }
+sub holdInstructionPickupToken { "1.2.840.10040.2.4" }
+
 =begin internals
 
 =item I<_new($x509_crl_version)>
@@ -2071,40 +2497,9 @@ the PEM-encoded CRL as a string.
 Does the actual job of L</new>.  $x509_crl_version must be an integer,
 0 for CRLv1 and 1 for CRLv2.
 
-=item I<_do_add_extension($extension)>
-
-Does the actual job of L</add_extension>, sans all the syntactic
-sugar. $extension is an instance of
-L</Crypt::OpenSSL::CA::X509V3_EXT>.
-
-=item I<_do_add_entry($serial, $date, $reason_code, $hold_instr,
-                      $compromise_time)>
-
-Does the actual job of L</add_entry>, sans all the syntactic sugar.
-All arguments are strings, except $reason_code which is an integer
-according to the enumeration set forth in RFC3280 section 5.3.1.
-$reason_code, $hold_instr and $compromise_time can be omitted (that
-is, passed as undef).
-
-This already ugly API will of course have to "evolve" as we implement
-more CRL entry extensions.
-
-=item I<_remove_extension_by_oid($oid_text)>
-
-Like L</remove_extension>, except that the parameter is an ASN.1
-Object Identifier in dotted-decimal form (e.g. "2.5.29.20" instead of
-C<cRLNumber>).
-
-=end internals
-
 =cut
 
-use Crypt::OpenSSL::CA::Inline::C <<"X509_CRL_CODE";
-#include <openssl/pem.h>
-#include <openssl/bio.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
-
+use Crypt::OpenSSL::CA::Inline::C <<"_NEW";
 static
 SV* _new(char *class, int x509_crl_version) {
     X509_CRL* retval = X509_CRL_new();
@@ -2119,41 +2514,80 @@ SV* _new(char *class, int x509_crl_version) {
 
     return perl_wrap("${\__PACKAGE__}", retval);
 }
+_NEW
 
-static
-int is_crlv2(SV* sv_self) {
-    return X509_CRL_get_version
-       (perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self));
-}
+=item I<_do_add_extension($extension)>
 
+Does the actual job of L</add_extension>, sans all the syntactic
+sugar. $extension is an instance of
+L</Crypt::OpenSSL::CA::X509V3_EXT>.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"_DO_ADD_EXTENSION";
 static
-void set_issuer_DN(SV* sv_self, SV* sv_dn) {
+void _do_add_extension(SV* sv_self, SV* sv_extension) {
     X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
-    X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
-                                X509_NAME *, sv_dn);
-    if (! X509_CRL_set_issuer_name(self, dn)) {
-        sslcroak("X509_CRL_set_issuer_name failed");
+    if (! X509_CRL_get_version(self)) {
+        croak("Cannot add extensions to a CRLv1");
+    }
+    X509_EXTENSION *ex = perl_unwrap("Crypt::OpenSSL::CA::X509V3_EXT",
+                                     X509_EXTENSION *, sv_extension);
+
+    if (! X509_CRL_add_ext(self, ex, -1)) {
+        sslcroak("X509_CRL_add_ext failed");
     }
 }
+_DO_ADD_EXTENSION
 
+=item I<_remove_extension_by_oid($oid_text)>
+
+Like L</remove_extension>, except that the parameter is an ASN.1
+Object Identifier in dotted-decimal form (e.g. "2.5.29.20" instead of
+C<cRLNumber>).
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"_REMOVE_EXTENSION_BY_OID";
 static
-void set_lastUpdate(SV* sv_self, char* startdate) {
+void _remove_extension_by_oid(SV* sv_self, char* oidtxt) {
     X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
-    ASN1_TIME* time = parse_RFC3280_time_or_croak(startdate);
-    X509_CRL_set_lastUpdate(self, time);
-    ASN1_TIME_free(time);
+    X509_EXTENSION* deleted;
+    ASN1_OBJECT* obj;
+    int i;
+
+    if (! (obj = OBJ_txt2obj(oidtxt, 1))) {
+        sslcroak("OBJ_txt2obj failed on %s", oidtxt);
+    }
+
+    while( (i = X509_CRL_get_ext_by_OBJ(self, obj, -1)) >= 0) {
+        if (! (deleted = X509_CRL_delete_ext(self, i)) ) {
+            ASN1_OBJECT_free(obj);
+            sslcroak("X509_delete_ext failed");
+        }
+        X509_EXTENSION_free(deleted);
+    }
+    ASN1_OBJECT_free(obj);
 }
+_REMOVE_EXTENSION_BY_OID
 
-static
-void set_nextUpdate(SV* sv_self, char* enddate) {
-    ASN1_TIME* newtime;
-    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
+=item I<_do_add_entry($serial, $date, $reason_code, $hold_instr,
+                      $compromise_time)>
 
-    ASN1_TIME* time = parse_RFC3280_time_or_croak(enddate);
-    X509_CRL_set_nextUpdate(self, time);
-    ASN1_TIME_free(time);
-}
+Does the actual job of L</add_entry>, sans all the syntactic sugar.
+All arguments are strings, except $reason_code which is an integer
+according to the enumeration set forth in RFC3280 section 5.3.1.
+$reason_code, $hold_instr and $compromise_time can be omitted (that
+is, passed as undef).
 
+This already ugly API will of course have to "evolve" as we implement
+more CRL entry extensions.
+
+=end internals
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"_DO_ADD_ENTRY";
 static
 void _do_add_entry(SV* sv_self, char* serial_hex, char* date,
                    SV* sv_reason, SV* sv_holdinstr,
@@ -2264,103 +2698,13 @@ error:
         if (sslerr) { sslcroak(sslerr); }
         sslcroak("Unknown error in _do_add_entry");
 }
-
-static
-SV* sign(SV* sv_self, SV* sv_key, char* digestname) {
-    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
-    EVP_PKEY* key = perl_unwrap("Crypt::OpenSSL::CA::PrivateKey",
-         EVP_PKEY *, sv_key);
-    const EVP_MD* digest;
-    BIO* mem;
-
-    ensure_openssl_stuff_loaded;
-    if (! (digest = EVP_get_digestbyname(digestname))) {
-        sslcroak("Unknown digest name: %s", digestname);
-    }
-
-    if (! X509_CRL_sort(self)) { sslcroak("X509_CRL_sort failed"); }
-
-    if (! X509_CRL_sign(self, key, digest)) {
-        sslcroak("X509_CRL_sign failed");
-    }
-
-    if (! (mem = BIO_new(BIO_s_mem()))) {
-        croak("Cannot allocate BIO");
-    }
-    if (! (PEM_write_bio_X509_CRL(mem, self) &&
-           BIO_write(mem, "\\0", 1)) ) {
-        BIO_free(mem);
-        croak("Serializing certificate failed");
-    }
-    return BIO_mem_to_SV(mem);
-}
-
-static
-void _remove_extension_by_oid(SV* sv_self, char* oidtxt) {
-    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
-    X509_EXTENSION* deleted;
-    ASN1_OBJECT* obj;
-    int i;
-
-    if (! (obj = OBJ_txt2obj(oidtxt, 1))) {
-        sslcroak("OBJ_txt2obj failed on %s", oidtxt);
-    }
-
-    while( (i = X509_CRL_get_ext_by_OBJ(self, obj, -1)) >= 0) {
-        if (! (deleted = X509_CRL_delete_ext(self, i)) ) {
-            ASN1_OBJECT_free(obj);
-            sslcroak("X509_delete_ext failed");
-        }
-        X509_EXTENSION_free(deleted);
-    }
-    ASN1_OBJECT_free(obj);
-}
-
-static
-void _do_add_extension(SV* sv_self, SV* sv_extension) {
-    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
-    if (! X509_CRL_get_version(self)) {
-        croak("Cannot add extensions to a CRLv1");
-    }
-    X509_EXTENSION *ex = perl_unwrap("Crypt::OpenSSL::CA::X509V3_EXT",
-                                     X509_EXTENSION *, sv_extension);
-
-    if (! X509_CRL_add_ext(self, ex, -1)) {
-        sslcroak("X509_CRL_add_ext failed");
-    }
-}
-
-static
-void DESTROY(SV* sv_self) {
-    X509_CRL_free(perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self));
-}
-
-X509_CRL_CODE
-
-
-=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionNone>
-
-=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionCallIssuer>
-
-=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionReject>
-
-=item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionPickupToken>
-
-OID constants for the respective hold instructions (see the
-I<-hold_oid> named option in L</add_entry>).  All these functions
-return a string containing a dot-separated sequence of decimal
-integers.
-
-=cut
-
-sub holdInstructionNone        { "1.2.840.10040.2.1" }
-sub holdInstructionCallIssuer  { "1.2.840.10040.2.2" }
-sub holdInstructionReject      { "1.2.840.10040.2.3" }
-sub holdInstructionPickupToken { "1.2.840.10040.2.4" }
+_DO_ADD_ENTRY
 
 =back
 
 =head1 TODO
+
+Add centralized key generation.
 
 Add some comfort features such as the ability to transfer
 certification information automatically from the CA certificate to the
@@ -2768,8 +3112,14 @@ test "X509 parsing" => sub {
 
     like($x509->get_subject_DN()->to_string(),
          qr/Internet Widgits/);
+    like($x509->get_issuer_DN()->to_string(),
+         qr/Internet Widgits/);
+    like($x509->get_serial, qr/^0x[1-9a-f][0-9a-f]*/);
 
     like($x509->dump, qr/Internet Widgits/);
+
+    like($x509->get_notBefore, qr/^\d{14}Z$/, "notBefore syntax");
+    like($x509->get_notAfter, qr/^\d{14}Z$/, "notAfter syntax");
 
     is(Crypt::OpenSSL::CA::PrivateKey->
        parse($test_keys_plaintext{rsa1024})->get_public_key->to_PEM,
@@ -2798,7 +3148,11 @@ test "X509 read accessor memory leaks" => sub {
                     ->parse($test_self_signed_certs{rsa1024});
                 $x509->get_public_key->get_modulus;
                 $x509->get_subject_DN;
+                $x509->get_issuer_DN;
+                $x509->get_serial;
                 $x509->get_subject_keyid;
+                $x509->get_notBefore;
+                $x509->get_notAfter;
                 $x509->dump;
             }
         };
@@ -2889,9 +3243,6 @@ test "monkeying with ->set_extension and ->add_extension in various ways"
           ("nice try with set_extension, no cigar")
           . 'fail("should have thrown");');
     my $exn = $@;
-    ok(eval { $exn->isa("Crypt::OpenSSL::CA::Error") } &&
-       grep { m/no issuer certificate/} @{$exn->{-openssl}} )
-        or warn Dumper($exn);
     eval {
         $cert->add_extension(undef, "WTF");
         fail("should have thrown");
@@ -2951,7 +3302,7 @@ sub christmasify_cert {
     my $keyid = Crypt::OpenSSL::CA::X509
         ->parse($test_self_signed_certs{"rsa1024"})
             ->get_public_key->get_openssl_keyid;
-    $cert->set_extension("authorityKeyIdentifier_keyid", $keyid,
+    $cert->set_extension("authorityKeyIdentifier", { keyid => $keyid },
                          -critical => 0); # RFC3280 section 4.2.1.1
 
     $cert->set_extension
@@ -2972,12 +3323,49 @@ sub christmasify_cert {
     eval <<"SUB_FROM_POD"; die $@ if $@;
 sub set_extensions_like_in_the_POD {
     my (\$cert) = \@_;
+
+    my \$dnobj = Crypt::OpenSSL::CA::X509_NAME->new
+         (CN => "bogus issuer");
     $code
 }
 SUB_FROM_POD
 }
 
-test "christmas tree certificate" => sub {
+test "Authority key identifier" => sub {
+    my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
+    $cert->set_extension("authorityKeyIdentifier",
+                         { keyid => "DE:AD:BE:EF" });
+    my $pem = $cert->sign($cakey, "sha1");
+    my $certdump = run_thru_openssl($pem, qw(x509 -noout -text));
+    unlike($certdump, qr/issuer/,
+         "authority key ID sans issuer + serial");
+    like($certdump, qr/de.ad.be.ef/i, "authority key id");
+
+    $cert->set_extension
+        ("authorityKeyIdentifier" =>
+         { issuer => Crypt::OpenSSL::CA::X509_NAME->new
+           (CN => "bogus issuer"),
+           serial => "0x1234abcd" });
+    $pem = $cert->sign($cakey, "sha1");
+    $certdump = run_thru_openssl($pem, qw(x509 -noout -text));
+    like($certdump, qr/bogus issuer/,
+         "authority key ID sans issuer + serial");
+    like($certdump, qr/12.?34.?ab.?cd.?/i,
+         "authority key ID sans issuer + serial, redux");
+    unlike($certdump, qr/keyid/i, "authority key id");
+
+    $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
+    set_extensions_like_in_the_POD($cert);
+    $pem = $cert->sign($cakey, "sha1");
+    $certdump = run_thru_openssl($pem, qw(x509 -noout -text));
+    like($certdump, qr/bogus issuer/,
+         "authority key ID as issuer + serial");
+    like($certdump, qr/12.?34.?ab.?cd.?/i,
+         "authority key ID as issuer + serial, redux");
+    like($certdump, qr/de.ad.be.ef/i, "authority key id");
+};
+
+test "Christmas tree certificate" => sub {
     my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
     christmasify_cert($cert);
     my $pem = $cert->sign($cakey, "sha1");
@@ -3013,7 +3401,7 @@ test "christmas tree certificate" => sub {
          "Proper detection of time format");
 };
 
-test "christmas tree validates OK in certificate chain" => sub {
+test "Christmas tree validates OK in certificate chain" => sub {
     my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
     christmasify_cert($cert);
     my $pem = $cert->sign($cakey, "sha1");
@@ -3067,7 +3455,7 @@ test "CRLv1" => sub {
     like($crldump, qr/next update.*2057/i, "Next update");
 
     eval {
-        $crl->set_extension("authorityKeyIdentifier_keyid", "de:ad:be:ef");
+        $crl->set_extension("authorityKeyIdentifier", { keyid => "de:ad:be:ef" });
         fail("Should have thrown");
     };
     like(Dumper($@), qr/extension/i);
@@ -3087,7 +3475,10 @@ sub christmasify_crl {
     $crl->set_lastUpdate("20070101000000Z");
     $crl->set_nextUpdate("20570101000000Z");
 
-    $crl->set_extension("authorityKeyIdentifier_keyid", "de:ad:be:ef");
+    $crl->set_extension("authorityKeyIdentifier",
+                        { keyid => "de:ad:be:ef",
+                          issuer => $crl_issuer_dn,
+                          serial => "0x41" });
     $crl->set_extension("crlNumber", "0x42deadbeef42", -critical => 1);
 
     $crl->set_extension("freshestCRL",
@@ -3176,6 +3567,44 @@ my $pem_private_key = $test_keys_plaintext{rsa1024};
 PREAMBLE
     eval $synopsis; die $@ if $@;
     pass;
+};
+
+=head2 Obsolete stuff
+
+Yet still under test.
+
+=cut
+
+test "obsolete ::PrivateKey->get_RSA_modulus" => sub {
+    my $key = Crypt::OpenSSL::CA::PrivateKey
+        ->parse($test_keys_plaintext{rsa1024});
+
+    is($key->get_RSA_modulus, $key->get_public_key->get_modulus);
+};
+
+test "obsolete ::X509->set_serial_hex" => sub {
+    my $cert = Crypt::OpenSSL::CA::X509->new
+        (Crypt::OpenSSL::CA::PublicKey
+         ->parse_RSA($test_public_keys{rsa1024}));
+    $cert->set_serial_hex("abcd1234");
+    is($cert->get_serial, "0xabcd1234");
+};
+
+test "obsolete authorityKeyIdentifier_keyid extension" => sub {
+    my $pubkey = Crypt::OpenSSL::CA::PublicKey
+        ->parse_RSA($test_public_keys{rsa1024});
+    my $privkey = Crypt::OpenSSL::CA::PrivateKey
+        ->parse($test_keys_plaintext{rsa1024});
+
+    my $x509 = Crypt::OpenSSL::CA::X509->new($pubkey);
+    $x509->set_extension("authorityKeyIdentifier_keyid", "de:ad:be:ef");
+    $x509->sign($privkey, "sha1");
+    like($x509->dump, qr/de.ad.be.ef/i);
+
+    my $crl = Crypt::OpenSSL::CA::X509_CRL->new();
+    $crl->set_extension("authorityKeyIdentifier_keyid", "de:ad:be:ef");
+    $crl->sign($privkey, "sha1");
+    like($crl->dump, qr/de.ad.be.ef/i);
 };
 
 =head2 Symbol leakage test

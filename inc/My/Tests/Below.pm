@@ -38,7 +38,7 @@ of organizing test code is not unlike L<Test::Inline>, by Adam Kennedy
 et al, in that it keeps code, documentation and tests in the same
 place, encouraging developers to modify all three at once.
 
-I prefer to use L<Test::Group> the unit perlmodlib-style unit tests,
+I like to use L<Test::Group> for the unit perlmodlib-style unit tests,
 because counting and recounting my tests drives me nuts :-). However
 C<My::Tests::Below> itself is testing-framework agnostic (its own
 self-test suite, for instance, uses only plain old L<Test::More>).

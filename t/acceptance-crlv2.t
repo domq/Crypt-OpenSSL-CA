@@ -64,7 +64,7 @@ $crl->set_issuer_DN($issuer_dn);
 $crl->set_lastUpdate("20070101000000Z");
 $crl->set_nextUpdate("20570101000000Z");
 
-$crl->set_extension("authorityKeyIdentifier_keyid", $keyid);
+$crl->set_extension("authorityKeyIdentifier", { keyid => $keyid });
 our $crlnumber = "deadbeef";
 $crl->set_extension("crlNumber", "0x$crlnumber", -critical => 1);
 
