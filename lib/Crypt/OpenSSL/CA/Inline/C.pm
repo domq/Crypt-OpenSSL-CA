@@ -30,7 +30,7 @@ Crypt::OpenSSL::CA::Inline::C - A bag of XS and L<Inline::C> tricks
   use Crypt::OpenSSL::CA::Inline::C <<"MORE_C_CODE";
 
   static
-  SV* another() {
+  void another() {
     // ...
   }
 
