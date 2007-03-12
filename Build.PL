@@ -24,7 +24,6 @@ my $builder = $class->new
       },
       build_requires      =>
       {
-       "Sub::Uplevel"     => 0.09, # In Crypt::OpenSSL::CA::Inline::C
        "Inline"           => 0.40,
        # Packages below are needed for the test suite. (And yes,
        # running the test suite *is* a requirement of the build
@@ -37,6 +36,8 @@ my $builder = $class->new
         "Net::SSLeay"   => 1.25, # For access to ERR_ in tests
       },
     add_to_cleanup      => [ 'Crypt-OpenSSL-CA-*', "_Inline" ],
+    add_to_no_index     =>
+      { namespace => [ "Crypt::OpenSSL::CA::Inline" ] },
     create_makefile_pl  => 'passthrough',
 );
 
@@ -53,11 +54,29 @@ use My::Module::Build;
 
 =head1 CUSTOM BUILD OPTIONS
 
-FIXME: auto-detect libcrypto version (0.9.5 required, see
-L<Crypt::OpenSSL::CA::Inline::C>), find out include and library path,
-etc.
+=item I<< --openssl-includedir=<path> >>
+
+Provides the path where the OpenSSL header files are to be found.
+Default is to query C<pkg-config>, or failing that, to use the
+compiler-provided system defaults.
 
 =cut
+
+sub openssl_includedir : Config_Option(type="string") {
+    (default => (`pkg-config --cflags-only-I openssl 2>/dev/null`));
+}
+
+=item I<< --openssl-libdir=<path> >>
+
+Provides the path where the OpenSSL libraries are to be found.
+Default is to query C<pkg-config>, or failing that, to use the
+compiler-provided system defaults.
+
+=cut
+
+sub openssl_libdir : Config_Option(type="string") {
+    (default => (`pkg-config --libs-only-L openssl 2>/dev/null`));
+}
 
 =head1 CUSTOM COMMAND-LINE SWITCHES
 
@@ -76,10 +95,9 @@ sub ACTION_test {
     my $self = shift;
 
     local $self->{args} = {%{$self->{args}}};
-
-    my $orig = $ENV{FULL_DEBUGGING};
-    local $ENV{FULL_DEBUGGING};
-    $ENV{FULL_DEBUGGING} = $orig if defined $orig;
+    local %ENV = $self->_customize_env(%ENV);
+    # And then customize some more:
+    delete $ENV{FULL_DEBUGGING};
 
     if ($self->{args}->{full_debugging}) {
         $ENV{FULL_DEBUGGING} = 1;
@@ -141,7 +159,8 @@ SCRIPT
     my @cmdline = ($^X, "-I" => catdir($self->topdir, "lib"),
                    -e => $script, $version, catdir(qw(blib arch)));
     warn(join(" ", @cmdline, "\n"));
-    local $ENV{PERL_INLINE_BUILD_NOISY} = 1;
+    local %ENV = $self->_customize_env(%ENV);
+    $ENV{PERL_INLINE_BUILD_NOISY} = 1;
     system(@cmdline);
     die "Command exited with status " . ($? >> 8) if $?;
     do { unlink or die "Cannot unlink($_): $!" } for glob("*.inl");
@@ -158,8 +177,8 @@ sub process_pm_files {
     my $self = shift;
     $self->SUPER::process_pm_files(@_);
 
-    push @INC, catdir($self->topdir, "lib");
-    require Crypt::OpenSSL::CA::Inline::C;
+    local $_ = catdir($self->topdir, qw(lib Crypt OpenSSL CA Inline C.pm));
+    require;
 
     my $out = catfile(qw(blib lib Crypt OpenSSL CA Inline C.pm));
     unlink($out);
@@ -183,6 +202,36 @@ sub topdir {
 }
 
 =back
+
+=begin internals
+
+=head1 INTERNAL METHODS
+
+=head2 _customize_env(%env)
+
+Takes %env as an environment hash and returns a modified copy of it
+where the L<Crypt::OpenSSL::CA/ENVIRONMENT VARIABLES> are set.  To be
+used typically as
+
+   local %ENV = $self->_customize_env(%ENV);
+
+right before doing anything that might result in the inline C code
+being recompiled.
+
+=cut
+
+sub _customize_env {
+    my ($self, %env) = @_;
+    foreach my $item (qw(openssl_libdir openssl_includedir)) {
+        my $varname = "BUILD_" . uc($item);
+        delete $env{$varname};
+        $env{$varname} = $self->option_value("$item")
+            if $self->option_value("$item");
+    }
+    return %env;
+}
+
+=end internals
 
 =cut
 

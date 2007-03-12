@@ -1,6 +1,6 @@
 ---
 name: Crypt-OpenSSL-CA
-version: 0.04
+version: 0.05
 author:
   - 'Dominique Quatravaux <domq@cpan.org>'
 abstract: The crypto parts of an X509v3 Certification Authority
@@ -19,45 +19,44 @@ build_requires:
   Inline: 0.4
   Memchmark: 0
   Net::SSLeay: 1.25
-  Sub::Uplevel: 0.09
   Test::Group: 0
   Test::More: 0
 provides:
   Crypt::OpenSSL::CA:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::CONF:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::ENGINE:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::Error:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
-  Crypt::OpenSSL::CA::Inline::C:
-    file: lib/Crypt/OpenSSL/CA/Inline/C.pm
+    version: 0.05
   Crypt::OpenSSL::CA::PrivateKey:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::PublicKey:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::X509:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::X509V3_EXT:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::X509_CRL:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
   Crypt::OpenSSL::CA::X509_NAME:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.04
+    version: 0.05
 generated_by: Module::Build version 0.26
 no_index:
   directory:
     - example
     - inc
     - t
+  namespace:
+    - Crypt::OpenSSL::CA::Inline

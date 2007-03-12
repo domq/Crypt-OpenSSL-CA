@@ -30,9 +30,10 @@ highlighted below. Put this in Build.PL:
            'Acme::Pony'    => 0,
            My::Module::Build->requires_for_tests(),
      },
+     add_to_no_index => { namespace => [ "My::Private::Stuff" ] },
   );
 
-  ## The remainder of the script is unchanged
+  ## The remainder of the script works like with stock Module::Build
 
 =for My::Tests::Below "synopsis" end
 
@@ -64,7 +65,7 @@ for this purpose, e.g.
 
 =item 2.
 
-create an inc/ subdirectory at the CPAN module's top level and drop
+create an C<inc/> subdirectory at the CPAN module's top level and drop
 this file there. (While you are there, you could put the rest of the
 My:: stuff along with it, and the t/maintainer/ test cases - see L<SEE
 ALSO>.)
@@ -93,8 +94,7 @@ you. This is done by adding the following lines to the META.yml file:
 column and the indenting quantum is exactly 2 spaces, B<no tabs
 allowed>)
 
-If you have arranged for the META.yml file to be built automatically
-(e.g. using an external Makefile for grouped CPAN packaging), do a
+If you prefer the META.yml file to be built automatically, do a
 
 =for My::Tests::Below "distmeta" begin
 
@@ -103,8 +103,8 @@ If you have arranged for the META.yml file to be built automatically
 
 =for My::Tests::Below "distmeta" end
 
-and this will be done automatically (but B<please double-check
-nevertheless>).
+and the aforementioned no_index exclusions will be set up
+automatically (but B<please double-check nevertheless>).
 
 =back
 
@@ -177,7 +177,7 @@ use base "Module::Build";
 
 use IO::File;
 use File::Path;
-use File::Spec;
+use File::Spec::Functions qw(catfile catdir);
 use File::Find;
 use File::Slurp;
 
@@ -195,6 +195,19 @@ true.  Also sets the C<recursive_test_files> property to true by
 default (see L<Module::Build/test_files>), since I like to store
 maintainer-only tests in C<t/maintainer> (as documented in
 L</find_test_files>).
+
+In addition to the %named_options documented in L<Module::Build/new>,
+I<My::Module::Build> provides support for the following switches:
+
+=over
+
+=item I<< add_to_no_index => $data_structure >>
+
+Appends the aforementioned directories and/or namespaces to the list
+that L</ACTION_distmeta> stores in META.yml.  Useful to hide some of
+the Perl modules from the CPAN index.
+
+=back
 
 =cut
 
@@ -251,9 +264,9 @@ downloaded from CPAN.
 
 sub maintainer_mode_enabled {
     my $self = shift;
-    return 1 if -d File::Spec->catdir($self->base_dir, ".svn");
+    return 1 if -d catdir($self->base_dir, ".svn");
     my $svkcmd = sprintf("svk info '%s' 2>%s",
-                         File::Spec->catdir($self->base_dir, "Build.PL"),
+                         catdir($self->base_dir, "Build.PL"),
                          File::Spec->devnull);
     `$svkcmd`; return 1 if ! $?;
     return 0;
@@ -569,15 +582,7 @@ sub ACTION_test {
     my $self = shift;
 
     local @INC = @INC;
-    push @INC, File::Spec->catdir($self->base_dir, "t", "lib");
-
-    # Implements the use_blib=0 feature:
-    local *blib = sub {
-        my $self = shift;
-
-        return $self->base_dir() if ! $self->use_blib;
-        return $self->SUPER::blib(@_);
-    };
+    push @INC, catdir($self->base_dir, "t", "lib");
 
     my @files_to_test = map {
         our $initial_cwd; # Set at BEGIN time, see L<_startperl>
@@ -597,9 +602,12 @@ sub ACTION_test {
         my @inc = do { my %inc_dupes; grep !$inc_dupes{$_}++, @INC };
         if (is_win32) { s/[\\\/+]$// foreach @inc; }
         # Add blib/lib and blib/arch like the original ACTION_test does:
-        unshift @inc,
-            File::Spec->catdir($self->base_dir(), $self->blib, 'lib'),
-                File::Spec->catdir($self->base_dir(), $self->blib, 'arch');
+        if ($self->use_blib) {
+            unshift @inc, catdir($self->base_dir(), $self->blib, 'lib'),
+                catdir($self->base_dir(), $self->blib, 'arch');
+        } else {
+            unshift @inc, catdir($self->base_dir(), 'lib');
+        }
         # Parse shebang line to set taintedness properly:
         local *TEST;
         open(TEST, $files_to_test[0]) or die
@@ -615,6 +623,8 @@ sub ACTION_test {
         return;
     }
 
+    # Localize stuff in order to fool our superclass for fun & profit
+
     local $self->{FORCE_find_test_files_result}; # See L</find_test_files>
     $self->{FORCE_find_test_files_result} = \@files_to_test if
         @files_to_test;
@@ -625,12 +635,23 @@ sub ACTION_test {
             (! exists $self->{properties}->{verbose});
     }
 
+    # use_blib=0 feature redux
+    no warnings "once";
+    local *blib = sub {
+        my $self = shift;
+
+        return File::Spec->curdir if ! $self->use_blib;
+        return $self->SUPER::blib(@_);
+    };
+
+
     $self->SUPER::ACTION_test(@_);
 }
 
 =item I<ACTION_distmeta>
 
-Overloaded to ensure that .pm modules in inc/ don't get indexed.
+Overloaded to ensure that .pm modules in inc/ don't get indexed and
+that the C<add_to_no_index> parameter to L</new> is honored.
 
 =cut
 
@@ -644,22 +665,40 @@ install it and re-run this command.
 
 MESSAGE
 
-    my $retval = $self->SUPER::ACTION_distmeta(@_);
+    # Steals a reference to the YAML object that will be constructed
+    # by the parent class (duhh)
+    local our $orig_yaml_node_new = \&YAML::Node::new;
+    local our $node;
 
-    my $metafile = $self->can("metafile") ? # True as of Module::Build 0.2805
-        $self->metafile() : $self->{metafile};
+    no warnings "redefine";
+    local *YAML::Node::new = sub {
+        $node = $orig_yaml_node_new->(@_);
+    };
+    my $retval = $self->SUPER::ACTION_distmeta;
+    die "Failed to steal the YAML node" unless defined $node;
 
-    my $fh = IO::File->new(">> $metafile")
-        or die "Can't open $metafile: $!";
-     do { $fh->print(<<"END_OF_META") and $fh->close() }
-no_index:
-  directory:
-    - example
-    - inc
-    - t
-END_OF_META
-         or die "Cannot write to $metafile: $!";
-    return $retval;
+    $node->{no_index} = $self->{properties}->{add_to_no_index} || {};
+    $node->{no_index}->{directory} ||= [];
+    unshift(@{$node->{no_index}->{directory}}, qw(example inc t));
+
+    foreach my $package (keys %{$node->{provides}}) {
+        delete $node->{provides}->{$package} if
+            (grep {$package =~ m/^\Q$_\E/}
+             @{$node->{no_index}->{namespace} || []});
+        delete $node->{provides}->{$package} if
+            (grep {$package eq $_}
+             @{$node->{no_index}->{package} || []});
+    }
+
+    my $metafile =
+        $self->can("metafile") ? # True as of Module::Build 0.2805
+            $self->metafile() : $self->{metafile};
+    # YAML API changed after version 0.30
+    my $yaml_sub =
+        ($YAML::VERSION le '0.30' ? \&YAML::StoreFile : \&YAML::DumpFile);
+    $yaml_sub->($metafile, $node)
+        or die "Could not write to $metafile: $!";
+;
 }
 
 =item I<process_pm_files>
@@ -753,19 +792,45 @@ sub find_test_files {
 
     File::Find::find
         ({no_chdir => 1, wanted => sub {
-              push(@tests, $_), return if m/My.Tests.Below\.pm$/;
-              my $module = File::Spec->catfile($self->base_dir, $_);
-              local *MODULE;
-              unless (open(MODULE, "<", $module)) {
-                  warn "Cannot open $module: $!";
-                  return;
-              }
-              push(@tests, $_) if grep {
-                  m/^require\s+My::Tests::Below\s+unless\s+caller/
-              } (<MODULE>);
-          }}, "lib", File::Spec->catdir("t", "lib"), "inc");
+              push(@tests, $_) if $self->find_test_files_predicate();
+          }}, $self->find_test_files_in_directories);
 
     return \@tests;
+}
+
+=item I<find_test_files_predicate()>
+
+=item I<find_test_files_in_directories()>
+
+Those two methods are used as callbacks by L</find_test_files>;
+subclasses of I<My::Module::Build> may therefore find it convenient to
+overload them.  I<find_test_files_in_directories> should return a list
+of the directories in which to search for test files.
+I<find_test_files_predicate> gets passed the name of each file found
+in these directories in the same way as a L<File::Find> C<wanted> sub
+would (that is, using $_ and B<not> the argument list); it should
+return a true value iff this file is a test file.
+
+=cut
+
+sub find_test_files_predicate {
+    my ($self) = @_;
+    return 1 if m/My.Tests.Below\.pm$/;
+    return if m/\b[_.]svn\b/; # Subversion temp file
+    my $module = catfile($self->base_dir, $_);
+    local *MODULE;
+    unless (open(MODULE, "<", $module)) {
+        warn "Cannot open $module: $!";
+        return;
+    }
+    return 1 if grep {
+        m/^require\s+My::Tests::Below\s+unless\s+caller/
+    } (<MODULE>);
+    return;
+}
+
+sub find_test_files_in_directories {
+    grep { -d } ("lib", catdir("t", "lib"));
 }
 
 =pod
@@ -1048,6 +1113,7 @@ question shall not be asked interactively.
 sub _option_question {
     my ($self, $key) = @_;
     my $question = $self->_option_compute_template($key)->{question};
+    return if ! defined $question;
     $question .= '?' unless ($question =~ m/\?/);
     return $question;
 }
@@ -1385,7 +1451,7 @@ use File::Copy qw(copy); # which is not a standard requires_for_tests,
                          # but since My::Module::Build only
                          # self-tests when maintainer_mode_enabled() is true
                          # this is no biggie.
-use File::Spec;
+use File::Spec::Functions qw(catfile catdir);
 use IO::Pipe;
 # Probably wise to add this in real test suites too:
 use Fatal qw(mkdir chdir read_file write_file copy);
@@ -1467,11 +1533,22 @@ FAKE_MODULE
 write_file("$fakemoduledir/lib/Fake/Module.pm", $fakemodule);
 
 mkdir("$fakemoduledir/$_") foreach
-    (qw(inc inc/My inc/My/Module));
+    (qw(inc inc/My inc/My/Module
+        lib/My lib/My/Private lib/My/Private/Stuff));
 
 use FindBin qw($Bin $Script);
-copy(File::Spec->catfile($Bin, $Script),
+copy(catfile($Bin, $Script),
             "$fakemoduledir/inc/My/Module/Build.pm");
+write_file(catfile($fakemoduledir, qw(lib My Private Stuff Indeed.pm)),
+           <<"BOGON");
+#!perl -w
+
+package My::Private::Stuff::Indeed;
+use strict;
+
+1;
+
+BOGON
 
 my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
 chdir($fakemoduledir);
@@ -1496,12 +1573,16 @@ SKIP: {
     $excerpt =~ s/\n+/\n/gs; $excerpt =~ s/^\n//s;
     like($META_yml, qr/\Q$excerpt\E/,
         "META.yml contains provisions against indexing My::* modules");
+    like($META_yml, qr|My\b.*\bPrivate\b.*\bStuff|,
+        "these provisions can be customized");
     like($META_yml, qr/\bFake::Module\b/,
         "Fake::Module is indexed");
     like($META_yml, qr/\bFake::Module::Ancillary::Class\b/,
         "Fake::Module::Ancillary::Class is indexed");
     unlike($META_yml, qr/This::Package::Should::Not::Be::Reported/,
         "META.yml should not index stuff that is after __END__");
+    unlike($META_yml, qr/Indeed/,
+        "META.yml should not index stuff that is in add_to_no_index");
 }
 
 # You have no chance to survive...

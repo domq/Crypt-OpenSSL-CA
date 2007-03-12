@@ -16,6 +16,9 @@ namely, a CA certificate and private key (both PEM-encoded), and
 either a PKCS#10 or a SPKAC request.  The private key is
 password-protected.
 
+If the VERBOSE environment variable is set, the generated certificates
+will be shown on standard error during the test run.
+
 =cut
 
 use Test::More no_plan => 1;
@@ -121,8 +124,8 @@ sub sign_certificate {
                          -critical => 1);
 
     my $keyid = $ca_cert_obj->get_subject_keyid;
-    die $ca_cert_obj->dump if ! defined $keyid;  # XXX
-    $cert->set_extension("authorityKeyIdentifier_keyid", $keyid,
+    $cert->set_extension("authorityKeyIdentifier",
+                         { keyid => $keyid },
                          -critical => 0); # As per RFC3280 section 4.2.1.1
     $cert->set_extension( subjectKeyIdentifier => "00:DE:AD:BE:EF");
 
@@ -185,6 +188,7 @@ sub ok_certificate {
 
     my ($certdump, $err) =
         run_thru_openssl($certpem, qw(x509 -noout -text));
+    diag($certdump) if $ENV{VERBOSE};
     is($?, 0, "``openssl x509'' ran successfully")
         or die $err;
 

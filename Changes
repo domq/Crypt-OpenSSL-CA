@@ -1,5 +1,9 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.05    09 Mar 2007
+        Added support for issuer + serial in authorityKeyIdentifier's
+        Added various read accessors to certificates and CRLs
+
 0.04    23 Feb 2007
         Added CRLv2 support
         POD cleanup for public release
