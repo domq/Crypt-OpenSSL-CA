@@ -784,8 +784,6 @@ KeyPurposeId ::= OBJECT IDENTIFIER
 
 SCHEMA
 
-=over
-
 =item I<x509_decoder($name)>
 
 Returns the same as L<Convert::ASN1/find> would when called upon an

@@ -659,6 +659,8 @@ INSTALLED_VERSION
 
 =end this_pod_is_not_ours
 
+=back
+
 =head1 ENVIRONMENT VARIABLES
 
 =head2 FULL_DEBUGGING
@@ -688,6 +690,8 @@ require My::Tests::Below unless caller();
 1;
 
 __END__
+
+=begin internals
 
 =head1 TEST SUITE
 
@@ -941,6 +945,8 @@ test "parse_serial memory leaks" => sub {
         }
     };
 };
+
+=end internals
 
 =cut
 

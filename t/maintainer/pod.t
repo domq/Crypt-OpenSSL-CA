@@ -10,14 +10,19 @@ plan(skip_all => "Test::Pod 1.14 required for testing POD"), exit unless
 plan(skip_all => "Pod::Text required for testing POD"), exit unless
     eval "use Pod::Text; 1";
 
-my @files = Test::Pod::all_pod_files();
-plan(skip_all => "no POD (yet?)"), exit if ! @files;
+my @mainfiles = Test::Pod::all_pod_files("blib");
+my @testfiles = Test::Pod::all_pod_files("t");
+plan(skip_all => "no POD (yet?)"), exit if (! @mainfiles && ! @testfiles);
 
-plan( tests => 3 * scalar (@files) );
+plan( tests => 3 * scalar (@mainfiles) + scalar(@testfiles) );
 
 my $out = catfile(qw(t pod-out.tmp));
 
-foreach my $file ( @files ) {
+foreach my $file ( @testfiles ) {
+    pod_file_ok( $file, $file );
+}
+
+foreach my $file (@mainfiles) {
     pod_file_ok( $file, $file );
 
 =pod

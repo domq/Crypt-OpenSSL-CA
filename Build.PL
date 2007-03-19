@@ -14,26 +14,40 @@ require 5.008; # Only tested as such.  Advanced features that are
 # exception objects.
 my $class = My::Module::Build->subclass(code => join('', <DATA>));
 
+warn join(" ",        My::Module::Build->requires_for_tests()); # XXX
+
 my $builder = $class->new
     ( module_name         => 'Crypt::OpenSSL::CA',
       license             => 'perl',
       dist_author         => 'Dominique Quatravaux <domq@cpan.org>',
       requires            =>
       {
-        "Convert::ASN1" => 0.20, # 0.20 brings needed utf8 bugfixes
+       "Carp"            => 0,
+       "XSLoader"        => 0,
       },
       build_requires      =>
       {
+       "Convert::ASN1"    => 0.20, # 0.20 brings needed utf8 bugfixes
        "Inline"           => 0.40,
+       "Inline::C"        => 0,
        # Packages below are needed for the test suite. (And yes,
        # running the test suite *is* a requirement of the build
        # process)
         My::Module::Build->requires_for_tests(),
-        "IPC::Run"         => 0,
+        "Test::Builder"         => 0,
+        "Exporter"              => 0,
+        "IPC::Run"              => 0,
+        "File::Find"            => 0,
+        "File::Path"            => 0,
+        "File::Spec"            => 0,
         "File::Spec::Functions" => 0,
-        "Devel::Leak" => 0,
-        "Memchmark"   => 0,
-        "Net::SSLeay"   => 1.25, # For access to ERR_ in tests
+        "Devel::Leak"           => 0,
+        "Data::Dumper"          => 0,
+        "Memchmark"             => 0,
+        "Net::SSLeay"           => 1.25, # For access to ERR_ in tests
+        "MIME::Base64"          => 0,
+        "DynaLoader"            => 0,    # For the symbol leak test
+        "POSIX"                 => 0,
       },
     add_to_cleanup      => [ 'Crypt-OpenSSL-CA-*', "_Inline" ],
     add_to_no_index     =>

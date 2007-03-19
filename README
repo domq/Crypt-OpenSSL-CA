@@ -17,7 +17,7 @@ To install this module, run the following commands:
 
 EXAMPLES
 
-Have a look at t/acceptance-*.t
+Have a look at examples/*.t
 
 SUPPORT AND DOCUMENTATION
 

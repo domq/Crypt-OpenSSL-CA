@@ -84,7 +84,7 @@ you. This is done by adding the following lines to the META.yml file:
 
  no_index:
    directory:
-     - example
+     - examples
      - inc
      - t
 
@@ -178,6 +178,7 @@ use base "Module::Build";
 use IO::File;
 use File::Path;
 use File::Spec::Functions qw(catfile catdir);
+use File::Spec::Unix ();
 use File::Find;
 use File::Slurp;
 
@@ -669,17 +670,19 @@ MESSAGE
     # by the parent class (duhh)
     local our $orig_yaml_node_new = \&YAML::Node::new;
     local our $node;
-
     no warnings "redefine";
     local *YAML::Node::new = sub {
         $node = $orig_yaml_node_new->(@_);
     };
+
     my $retval = $self->SUPER::ACTION_distmeta;
     die "Failed to steal the YAML node" unless defined $node;
 
     $node->{no_index} = $self->{properties}->{add_to_no_index} || {};
     $node->{no_index}->{directory} ||= [];
-    unshift(@{$node->{no_index}->{directory}}, qw(example inc t));
+    unshift(@{$node->{no_index}->{directory}}, qw(examples inc t),
+            (map { File::Spec::Unix->catdir("lib", split m/::/) }
+             (@{$node->{no_index}->{namespace} || []})));
 
     foreach my $package (keys %{$node->{provides}}) {
         delete $node->{provides}->{$package} if
@@ -769,9 +772,9 @@ sub new_pm_filter { My::Module::Build::PmFilter->new }
 =item I<find_test_files()>
 
 Overloaded from parent class to treat all .pm files in C<lib/> and
-C<t/lib/> as unit tests if they use L<My::Tests::Below>, and to retain
-C<.t> test files in C<t/maintainer> if and only if
-L</maintainer_mode_enabled> is true.
+C<t/lib/> as unit tests if they use L<My::Tests::Below>, to look for
+C<.t> files in C<examples/>, and to retain C<.t> test files in
+C<t/maintainer> if and only if L</maintainer_mode_enabled> is true.
 
 =cut
 
@@ -816,7 +819,8 @@ return a true value iff this file is a test file.
 sub find_test_files_predicate {
     my ($self) = @_;
     return 1 if m/My.Tests.Below\.pm$/;
-    return if m/\b[_.]svn\b/; # Subversion temp file
+    return if m/\b[_.]svn\b/; # Subversion metadata
+    return 1 if m/\.t$/;
     my $module = catfile($self->base_dir, $_);
     local *MODULE;
     unless (open(MODULE, "<", $module)) {
@@ -830,7 +834,7 @@ sub find_test_files_predicate {
 }
 
 sub find_test_files_in_directories {
-    grep { -d } ("lib", catdir("t", "lib"));
+    grep { -d } ("lib", catdir("t", "lib"), "examples");
 }
 
 =pod

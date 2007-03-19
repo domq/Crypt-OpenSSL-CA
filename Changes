@@ -1,5 +1,9 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.08    19 Mar 2007
+        Attempt to fix the bugs found by CPAN-Testers and
+        shamelessy raise my Kwalitee
+
 0.07    19 Mar 2007
         Minor tidy-up
 
