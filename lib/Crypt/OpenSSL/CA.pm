@@ -5,7 +5,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = 0.06;
+our $VERSION = 0.07;
 
 =head1 NAME
 
@@ -1532,8 +1532,8 @@ Returns the subject DN (resp. issuer DN) of this
 I<Crypt::OpenSSL::CA::X509> instance, as an
 L</Crypt::OpenSSL::CA::X509_NAME> instance.  Memory-management wise,
 this performs a copy of the underlying C<X509_NAME *> structure;
-therefore there it is safe to destroy this certificate object
-afterwards and keep only the returned DN.
+therefore it is safe to destroy this certificate object afterwards and
+keep only the returned DN.
 
 =cut
 
@@ -1834,6 +1834,9 @@ becomes
    $cert->set_extension( subjectKeyIdentifier => "00:DE:AD:BE:EF");
 
 =for My::Tests::Below "set_extension subjectKeyIdentifier" end
+
+See the details in the B<x509v3_config(5ssl)> manpage provided with
+OpenSSL.
 
 Actually I<set_extension()> interprets a few ($extname, $value) pairs
 that are B<not> understood by stock OpenSSL, most notably C<$extname =
@@ -2479,9 +2482,9 @@ DUMP
 =item I<Crypt::OpenSSL::CA::X509_CRL::holdInstructionPickupToken>
 
 OID constants for the respective hold instructions (see the
-I<-hold_oid> named option in L</add_entry>).  All these functions
-return a string containing a dot-separated sequence of decimal
-integers.
+I<-hold_instruction> named option in L</add_entry>).  All these
+functions return a string containing a dot-separated sequence of
+decimal integers.
 
 =cut
 
@@ -2784,9 +2787,8 @@ L<http://search.cpan.org/dist/Crypt-OpenSSL-CA>
 IDEALX (L<http://www.idealx.com/>) is the company that put food on my
 family's table for 5 years while I was busy coding IDX-PKI.  I owe
 them pretty much everything I know about PKIX, and a great deal of my
-todays' Perl-fu.  It is therefore no surprise that the API of this
-module closely resembles that of L<IDX::PKI::CA>, as permitted by the
-license thereof.  The implementation, however, is original.
+todays' Perl-fu.  However, the implementation of this module is
+original and does not re-use any code in IDX-PKI.
 
 =head1 COPYRIGHT & LICENSE
 

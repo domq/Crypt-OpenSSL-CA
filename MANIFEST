@@ -6,9 +6,11 @@ lib/Crypt/OpenSSL/CA.pm
 lib/Crypt/OpenSSL/CA/AlphabetSoup.pod
 lib/Crypt/OpenSSL/CA/Inline/C.pm
 lib/Crypt/OpenSSL/CA/Resources.pod
+Makefile.PL
 MANIFEST			This list of files
 META.yml
 README
+t/10-unknown-method.t
 t/acceptance-crlv2.t
 t/acceptance-delta-crl.t
 t/acceptance-make-x509-cert.t
