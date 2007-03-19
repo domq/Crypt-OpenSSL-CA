@@ -5,7 +5,7 @@ use warnings;
 
 =head1 NAME
 
-acceptance-crlv2.t - Make an RFC3280-compliant CRLv2
+crlv2.t - Make an RFC3280-compliant CRLv2
 
 =head1 DESCRIPTION
 
@@ -22,7 +22,7 @@ use Crypt::OpenSSL::CA;
 =head2 CA private key and certificate
 
 Provided by L<Crypt::OpenSSL::CA::Test>.  See
-C<acceptance-make-x509-cert.t> for details.
+C<make-x509-cert.t> for details.
 
 =cut
 
@@ -71,7 +71,7 @@ $crl->set_extension("crlNumber", "0x$crlnumber", -critical => 1);
 =pod
 
 Just for fun, we add a C<freshestCRL> extension as per RFC3280 section
-5.2.6; the corresponding delta CRL is issued by C<acceptance-delta-crl.t>
+5.2.6; the corresponding delta CRL is issued by C<delta-crl.t>
 
 =cut
 
@@ -84,7 +84,7 @@ $crl->set_extension("freshestCRL",
 In order of appearance: a CRLv1-like unadorned entry, an entry with
 C<unspecified> revocation reason, an entry for a certificate that was
 put on hold (that is removed by the delta-CRL, see
-C<acceptance-delta-crl.t>), and an entry for a certificate whose key
+C<delta-crl.t>), and an entry for a certificate whose key
 was compromised (with a compromiseTime set).  Notice that the CRL
 entries are in no particular order.
 

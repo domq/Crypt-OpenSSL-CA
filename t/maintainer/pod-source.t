@@ -20,7 +20,9 @@ plan(skip_all => "Test::Pod 1.14 required for testing POD"), exit unless
 plan(skip_all => "Pod::Text required for testing POD"), exit unless
     eval "use Pod::Text; 1";
 
-my @files = grep { ! m/\bC.pm$/ } (Test::Pod::all_pod_files("lib"));
+my @files = Test::Pod::all_pod_files("lib");
+plan(skip_all => "no POD (yet?)"), exit if ! @files;
+
 plan( tests => 3 * scalar (@files) );
 
 my $out = catfile(qw(t pod-out.tmp));

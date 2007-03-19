@@ -5,7 +5,7 @@ use warnings;
 
 =head1 NAME
 
-acceptance-make-x509-cert.t - Make an RSA X509 certificate using
+make-x509-cert.t - Make an RSA X509 certificate using
 L<Crypt::OpenSSL::CA>
 
 =head1 DESCRIPTION

@@ -168,8 +168,8 @@ Privacy-enhanced Electronic Mail, an early attempt at deploying
 public-key cryptography over the Internet
 (http://en.wikipedia.org/wiki/Privacy-enhanced_Electronic_Mail).  The
 file format of PEM, which consists of putting base64-encoded <L/DER>
-data between type markers such as C<----- BEGIN CERTIFICATE -----> and
-<----- END CERTIFICATE ----->, is still used by L</PKIX> extensively.
+data between type markers such as C<-----BEGIN CERTIFICATE-----> and
+C<-----END CERTIFICATE----->, is still used by L</PKIX> extensively.
 
 =head2 PKCS
 

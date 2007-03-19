@@ -5,13 +5,13 @@ use warnings;
 
 =head1 NAME
 
-acceptance-delta-crl.t - Make a delta CRL as per RFC3280 section 5.2.4
+delta-crl.t - Make a delta CRL as per RFC3280 section 5.2.4
 
 =head1 DESCRIPTION
 
 This test walks the reader through using L<Crypt::OpenSSL::CA> to
 issue a delta CRL.  The resulting delta CRL will be compatible with
-the CRL created by acceptance-crlv2.t in the same directory.
+the CRL created by crlv2.t in the same directory.
 
 =cut
 
@@ -23,7 +23,7 @@ use Crypt::OpenSSL::CA;
 =head2 CA private key and certificate
 
 Provided by L<Crypt::OpenSSL::CA::Test>.  See
-acceptance-make-x509-cert.t for details.
+make-x509-cert.t for details.
 
 =cut
 
@@ -39,7 +39,7 @@ our $ca_privatekey  = Crypt::OpenSSL::CA::PrivateKey->parse
 
 =head2  Global CRL settings
 
-See details in C<acceptance-crlv2.t>
+See details in C<crlv2.t>
 
 =cut
 
@@ -59,7 +59,7 @@ $crl->set_extension("crlNumber", "0x$crlnumber", -critical => 1);
 =pod
 
 Additionally, this CRL is marked as a delta CRL whose base CRL is the
-one issued by C<acceptance-crlv2.t> . The corresponding extension is
+one issued by C<crlv2.t> . The corresponding extension is
 critical, as per RFC3280 section 5.2.4.
 
 =cut
