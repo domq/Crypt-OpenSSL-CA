@@ -606,13 +606,13 @@ compile time.
 
 =cut
 
-sub installed_version { <<'INSTALLED_VERSION'; }
+sub installed_version { <<'INSTALLED_VERSION' }
 #!perl -w
 
 package Crypt::OpenSSL::CA::Inline::C;
 
 use strict;
-require DynaLoader;
+use XSLoader;
 
 sub import {
     my ($class, $stuff) = @_;
@@ -621,8 +621,8 @@ sub import {
 
     my ($package) = caller;
     no strict "refs";
-    push @{$package."::ISA"}, qw(DynaLoader);
-    $package->bootstrap;
+    push @{$package."::ISA"}, qw(XSLoader);
+    XSLoader::load($package);
 }
 
 =head1 NAME

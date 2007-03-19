@@ -1,5 +1,8 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.07    19 Mar 2007
+        Minor tidy-up
+
 0.06    12 Mar 2007
         Minor bugfix release (0.05 was a tad too hasty)
 
