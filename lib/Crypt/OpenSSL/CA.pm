@@ -5,7 +5,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = 0.08;
+our $VERSION = 0.09;
 
 =head1 NAME
 
@@ -199,8 +199,8 @@ use Crypt::OpenSSL::CA::Inline::C <<"X509_BASE";
 #include <openssl/x509.h>
 
 static
-void DESTROY(SV* obj) {
-    X509_NAME_free(perl_unwrap("${\__PACKAGE__}", X509_NAME *, obj));
+void DESTROY(SV* sv_self) {
+    X509_NAME_free(perl_unwrap("${\__PACKAGE__}", X509_NAME *, sv_self));
 }
 
 X509_BASE
@@ -339,8 +339,8 @@ I<to_string()> is therefore intended only for debugging.
 use Crypt::OpenSSL::CA::Inline::C <<"TO_STRING";
 
 static
-SV* to_string(SV* obj) {
-    X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, obj);
+SV* to_string(SV* sv_self) {
+    X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, sv_self);
     return openssl_string_to_SV(X509_NAME_oneline(self, NULL, 4096));
 }
 
@@ -356,11 +356,11 @@ bytes.
 use Crypt::OpenSSL::CA::Inline::C <<"TO_ASN1";
 
 static
-SV* to_asn1(SV* obj) {
+SV* to_asn1(SV* sv_self) {
     unsigned char* asn1buf = NULL;
     SV* retval = NULL;
     int length;
-    X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, obj);
+    X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, sv_self);
     length = i2d_X509_NAME(self, &asn1buf);
     if (length < 0) { croak("i2d_X509_NAME failed"); }
     retval = openssl_buf_to_SV((char *)asn1buf, length);
@@ -394,8 +394,8 @@ use Crypt::OpenSSL::CA::Inline::C <<"PUBLICKEY_BASE";
                                  in get_openssl_keyid() */
 
 static
-void DESTROY(SV* obj) {
-    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj));
+void DESTROY(SV* sv_self) {
+    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, sv_self));
 }
 
 PUBLICKEY_BASE
@@ -475,7 +475,6 @@ SV* validate_SPKAC(char *class, const char* base64_spkac) {
     NETSCAPE_SPKI* spkac;
     EVP_PKEY* retval;
 
-    ensure_openssl_stuff_loaded();
     if (! (spkac = NETSCAPE_SPKI_b64_decode(base64_spkac, -1)) ) {
         sslcroak("Unable to load Netscape SPKAC structure");
     }
@@ -499,7 +498,6 @@ SV* validate_PKCS10(char *class, const char* pem_pkcs10) {
     EVP_PKEY* retval;
     int status;
 
-    ensure_openssl_stuff_loaded();
     pkcs10bio = BIO_new_mem_buf((void *) pem_pkcs10, -1);
     if (pkcs10bio == NULL) {
         croak("BIO_new_mem_buf failed");
@@ -572,8 +570,8 @@ newline-terminated.
 use Crypt::OpenSSL::CA::Inline::C <<"GET_MODULUS";
 
 static
-SV* get_modulus(SV* obj) {
-    EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj);
+SV* get_modulus(SV* sv_self) {
+    EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, sv_self);
     BIO* mem;
     SV* retval;
     int printstatus;
@@ -615,8 +613,8 @@ L</set_extension>.
 use Crypt::OpenSSL::CA::Inline::C <<"GET_OPENSSL_KEYID";
 
 static
-SV* get_openssl_keyid(SV* obj) {
-    EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj);
+SV* get_openssl_keyid(SV* sv_self) {
+    EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, sv_self);
     X509* fakecert = NULL;
     X509V3_EXT_METHOD* method = NULL;
     X509V3_CTX ctx;
@@ -691,8 +689,8 @@ use Crypt::OpenSSL::CA::Inline::C <<"PRIVATEKEY_BASE";
 #include <openssl/evp.h>
 
 static
-void DESTROY(SV* obj) {
-    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj));
+void DESTROY(SV* sv_self) {
+    EVP_PKEY_free(perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, sv_self));
 }
 
 PRIVATEKEY_BASE
@@ -771,7 +769,6 @@ SV* _parse(char *class, const char* pemkey, SV* svpass,
     ENGINE* e;
     char* pass = NULL;
 
-    ensure_openssl_stuff_loaded(); /* Needed by PEM_read_bio_PrivateKey */
     if (SvOK(svpass)) { pass = char0_value(svpass); }
 
     if (SvTRUE(parse_using_engine_p)) {
@@ -816,8 +813,8 @@ L</Crypt::OpenSSL::CA::PublicKey> object.
 
 use Crypt::OpenSSL::CA::Inline::C <<"GET_PUBLIC_KEY";
 static
-SV* get_public_key(SV* obj) {
-    EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, obj);
+SV* get_public_key(SV* sv_self) {
+    EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, sv_self);
     EVP_PKEY* retval = NULL;
     unsigned char* asn1buf = NULL;
     const unsigned char* asn1buf_copy;
@@ -870,8 +867,8 @@ package Crypt::OpenSSL::CA::ENGINE;
 #include <openssl/engine.h>
 
 static
-void DESTROY(SV* obj) {
-        ENGINE_free(perl_unwrap("${\__PACKAGE__}", ENGINE *, obj));
+void DESTROY(SV* sv_self) {
+        ENGINE_free(perl_unwrap("${\__PACKAGE__}", ENGINE *, sv_self));
 }
 
 ENGINE_BASE
@@ -1376,8 +1373,8 @@ use Crypt::OpenSSL::CA::Inline::C <<"X509_BASE";
 #include <openssl/evp.h> /* For EVP_get_digestbyname() */
 #include <openssl/bn.h>  /* For BN_hex2bn in set_serial() */
 static
-void DESTROY(SV* obj) {
-    X509_free(perl_unwrap("${\__PACKAGE__}", X509 *, obj));
+void DESTROY(SV* sv_self) {
+    X509_free(perl_unwrap("${\__PACKAGE__}", X509 *, sv_self));
 }
 X509_BASE
 
@@ -1503,6 +1500,30 @@ SV* parse(char *class, const char* pemcert) {
 }
 PARSE
 
+=item I<verify($pubkey)>
+
+Verifies that this certificate is validly signed by $pubkey, an
+instance of L</Crypt::OpenSSL::CA::PublicKey>, and throws an exception
+if not.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"VERIFY";
+static
+int verify(SV* sv_self, SV* sv_pubkey) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
+    EVP_PKEY* pubkey = perl_unwrap("Crypt::OpenSSL::CA::PublicKey",
+                                   EVP_PKEY *, sv_pubkey);
+    int result;
+
+    result = X509_verify(self, pubkey);
+
+    if (result > 0) { return result; }
+    sslcroak("Certificate verify failed");
+    return -1; /* Not reached */
+}
+VERIFY
+
 =item I<get_public_key()>
 
 Returns an instance of L</Crypt::OpenSSL::CA::PublicKey> that
@@ -1515,8 +1536,8 @@ certificate object afterwards and keep only the returned public key.
 
 use Crypt::OpenSSL::CA::Inline::C <<"GET_PUBLIC_KEY";
 static
-SV* get_public_key(SV* obj) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+SV* get_public_key(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     EVP_PKEY* pkey = X509_get_pubkey(self);
     if (! pkey) { sslcroak("Huh, no public key in this certificate?!"); }
 
@@ -1539,8 +1560,8 @@ keep only the returned DN.
 
 use Crypt::OpenSSL::CA::Inline::C <<"GET_DN";
 static
-SV* get_subject_DN(SV* obj) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+SV* get_subject_DN(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     X509_NAME* name = X509_get_subject_name(self);
 
     if (! name) { sslcroak("Huh, no subject name in certificate?!"); }
@@ -1552,8 +1573,8 @@ SV* get_subject_DN(SV* obj) {
 }
 
 static
-SV* get_issuer_DN(SV* obj) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+SV* get_issuer_DN(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     X509_NAME* name = X509_get_issuer_name(self);
 
     if (! name) { sslcroak("Huh, no issuer name in certificate?!"); }
@@ -1577,8 +1598,8 @@ objects.
 
 use Crypt::OpenSSL::CA::Inline::C <<"SET_DN";
 static
-void set_subject_DN(SV* obj, SV* dn_object) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+void set_subject_DN(SV* sv_self, SV* dn_object) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
                                 X509_NAME *, dn_object);
     if (! X509_set_subject_name(self, dn)) {
@@ -1587,8 +1608,8 @@ void set_subject_DN(SV* obj, SV* dn_object) {
 }
 
 static
-void set_issuer_DN(SV* obj, SV* dn_object) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+void set_issuer_DN(SV* sv_self, SV* dn_object) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     X509_NAME* dn = perl_unwrap("Crypt::OpenSSL::CA::X509_NAME",
                                 X509_NAME *, dn_object);
     if (! X509_set_issuer_name(self, dn)) {
@@ -1648,8 +1669,8 @@ containing a lowercase, hexadecimal string that starts with "0x".
 
 use Crypt::OpenSSL::CA::Inline::C <<"GET_SET_SERIAL";
 static
-SV* get_serial(SV* obj) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+SV* get_serial(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     ASN1_INTEGER* serial_asn1;
     BIO* mem = BIO_new(BIO_s_mem());
     int status = 1;
@@ -1681,8 +1702,8 @@ SV* get_serial(SV* obj) {
 }
 
 static
-void set_serial(SV* obj, char* serial_hexstring) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+void set_serial(SV* sv_self, char* serial_hexstring) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     ASN1_INTEGER* serial_asn1;
     int status;
 
@@ -1697,8 +1718,8 @@ void set_serial(SV* obj, char* serial_hexstring) {
    to support other serial number formats in the future. Use
    L</set_serial> instead with a 0x prefix.  */
 static
-void set_serial_hex(SV* obj, char* serial_hexstring) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+void set_serial_hex(SV* sv_self, char* serial_hexstring) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     ASN1_INTEGER* serial_asn1;
     BIGNUM* serial = NULL;
 
@@ -1965,8 +1986,8 @@ Removes any and all extensions named $extname in this certificate.
 
 use Crypt::OpenSSL::CA::Inline::C <<"REMOVE_EXTENSION";
 static
-void remove_extension(SV* obj, char* key) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+void remove_extension(SV* sv_self, char* key) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     X509_EXTENSION* deleted;
     int nid, i;
 
@@ -1996,8 +2017,8 @@ L</Crypt::OpenSSL::CA::X509V3_EXT>.
 
 use Crypt::OpenSSL::CA::Inline::C <<"DO_ADD_EXTENSION";
 static
-void _do_add_extension(SV* obj, SV* sv_extension) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+void _do_add_extension(SV* sv_self, SV* sv_extension) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     X509_EXTENSION *ex = perl_unwrap("Crypt::OpenSSL::CA::X509V3_EXT",
                                      X509_EXTENSION *, sv_extension);
 
@@ -2017,8 +2038,8 @@ C<X509_print()>.
 
 use Crypt::OpenSSL::CA::Inline::C <<"DUMP";
 static
-SV* dump(SV* obj) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+SV* dump(SV* sv_self) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     BIO* mem = BIO_new(BIO_s_mem());
 
     if (! mem) {
@@ -2047,14 +2068,13 @@ the PEM-encoded certificate as a string.
 
 use Crypt::OpenSSL::CA::Inline::C <<"SIGN";
 static
-SV* sign(SV* obj, SV* privkey, char* digestname) {
-    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, obj);
+SV* sign(SV* sv_self, SV* privkey, char* digestname) {
+    X509* self = perl_unwrap("${\__PACKAGE__}", X509 *, sv_self);
     EVP_PKEY* key = perl_unwrap("Crypt::OpenSSL::CA::PrivateKey",
          EVP_PKEY *, privkey);
     const EVP_MD* digest;
     BIO* mem;
 
-    ensure_openssl_stuff_loaded;
     if (! (digest = EVP_get_digestbyname(digestname))) {
         sslcroak("Unknown digest name: %s", digestname);
     }
@@ -2423,7 +2443,6 @@ SV* sign(SV* sv_self, SV* sv_key, char* digestname) {
     const EVP_MD* digest;
     BIO* mem;
 
-    ensure_openssl_stuff_loaded;
     if (! (digest = EVP_get_digestbyname(digestname))) {
         sslcroak("Unknown digest name: %s", digestname);
     }
@@ -2456,8 +2475,8 @@ C<X509_CRL_print()>.
 
 use Crypt::OpenSSL::CA::Inline::C <<"DUMP";
 static
-SV* dump(SV* obj) {
-    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, obj);
+SV* dump(SV* sv_self) {
+    X509_CRL* self = perl_unwrap("${\__PACKAGE__}", X509_CRL *, sv_self);
     BIO* mem = BIO_new(BIO_s_mem());
 
     if (! mem) {
@@ -3140,24 +3159,43 @@ test "X509 parsing" => sub {
         or warn $anotherx509->dump;
 
     errstack_empty_ok();
+
+    my $rightpubkey = Crypt::OpenSSL::CA::PublicKey->parse_RSA
+                     ($test_public_keys{rsa1024});
+    my $wrongpubkey = Crypt::OpenSSL::CA::PublicKey->parse_RSA
+        (<<"ANOTHER_PUBLIC_KEY");
+-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCxMU9SUakTmhw/y8YMDK9YlEQ0
+Fjn7FLTWlnk1GUVJDkmrJKeO/RHv9xU9sH+slNvKcJYDMAPulkNmWLUE3WcqxUc1
+BZWoEyy4Q2O6rcQ1pguHaxRUZ5ewMzpNbAhB+ZSbJ1SqJcraYqMVKrF+QL5Xsvad
+HG+cnQY/bBZ9V7YqwwIDAQAB
+-----END PUBLIC KEY-----
+ANOTHER_PUBLIC_KEY
+    ok($x509->verify($rightpubkey));
+    ok(! eval { $x509->verify($wrongpubkey); 1 });
+    is(ref($@), "Crypt::OpenSSL::CA::Error");
+
+    errstack_empty_ok();
 };
 
 skip_next_test if cannot_check_bytes_leaks;
 test "X509 read accessor memory leaks" => sub {
-        leaks_bytes_ok {
-            for(1..1000) {
-                my $x509 = Crypt::OpenSSL::CA::X509
-                    ->parse($test_self_signed_certs{rsa1024});
-                $x509->get_public_key->get_modulus;
-                $x509->get_subject_DN;
-                $x509->get_issuer_DN;
-                $x509->get_serial;
-                $x509->get_subject_keyid;
-                $x509->get_notBefore;
-                $x509->get_notAfter;
-                $x509->dump;
-            }
-        };
+    my $pubkey = Crypt::OpenSSL::CA::PublicKey->parse_RSA
+        ($test_public_keys{rsa1024});
+    leaks_bytes_ok {
+        for(1..1000) {
+            my $x509 = Crypt::OpenSSL::CA::X509
+                ->parse($test_self_signed_certs{rsa1024});
+            $x509->get_public_key->get_modulus;
+            $x509->get_subject_DN;
+            $x509->get_issuer_DN;
+            $x509->get_serial;
+            $x509->get_subject_keyid;
+            $x509->get_notBefore;
+            $x509->get_notAfter;
+            $x509->dump;
+        }
+    };
 };
 
 my $cakey = Crypt::OpenSSL::CA::PrivateKey

@@ -28,7 +28,7 @@ highlighted below. Put this in Build.PL:
      ## ... Use ordinary Module::Build arguments here ...
      build_requires =>    {
            'Acme::Pony'    => 0,
-           My::Module::Build->requires_for_tests(),
+           My::Module::Build->requires_for_build(),
      },
      add_to_no_index => { namespace => [ "My::Private::Stuff" ] },
   );
@@ -61,7 +61,7 @@ its companion command C<module-starter(1)> is B<highly> recommended
 for this purpose, e.g.
 
    module-starter --mb --module=Main::Screen::Turn::On \
-     --author='Dominique Quatravaux' --email='dom@idealx.com' --force
+     --author='Dominique Quatravaux' --email='domq@cpan.org' --force
 
 =item 2.
 
@@ -225,27 +225,39 @@ sub new {
     $self;
 }
 
-=item I<requires_for_tests()>
+=item I<requires_for_build()>
 
-Returns a list of packages that are required for my custom style of
-L</Unit tests>, that should therefore be appended to the
-C<build_requires> hash as shown in L</SYNOPSIS>.
+Returns a list of packages that are required by I<My::Module::Build>
+itself, and should therefore be appended to the C<build_requires> hash
+as shown in L</SYNOPSIS>.
 
 =cut
 
-sub requires_for_tests {
-       ('Test::More' => 0,
-        'Test::Group' => 0,
+sub requires_for_build {
+       ('IO::File'              => 0,
+        'File::Path'            => 0,
+        'File::Spec::Functions' => 0,
+        'File::Spec::Unix'      => 0,
+        'File::Find'            => 0,
+        'File::Slurp'           => 0,
+        'Module::Build'         => 0,
+        'Module::Build::Compat' => 0,
+        'FindBin'               => 0, # As per L</SYNOPSIS>
+        'File::Spec' => 0, # For the heck of it, as we already require
+                           # two File::Spec::*'s
+
+        # The following are actually requirements for tests:
         'File::Temp' => 0,  # for tempdir() in My::Tests::Below
         'File::Slurp' => 0, # a common occurence in my tests
         'Fatal' => 0, # Used to cause tests to die early if fixturing
                       # fails, see sample in this module's test suite
                       # (at the bottom of this file)
-        'IO::Pipe' => 0, # Used to run commands and test their STDOUT
-                         # w/o breaking taint safety
-        'FindBin' => 0, # Used by the test suite to create a
-                        # test package atop My::Module::Build
        );
+}
+
+{
+    no warnings "once";
+    *requires_for_tests = \&requires_for_build; # OBSOLETE misnomer
 }
 
 =back
@@ -630,10 +642,10 @@ sub ACTION_test {
     $self->{FORCE_find_test_files_result} = \@files_to_test if
         @files_to_test;
     # DWIM for ->{verbose} (see POD)
-    local $self->{properties} = $self->{properties};
+    local $self->{properties} = { %{$self->{properties}} };
     if (@files_to_test == 1) {
         $self->{properties}->{verbose} = 1 if
-            (! exists $self->{properties}->{verbose});
+            (! defined $self->{properties}->{verbose});
     }
 
     # use_blib=0 feature redux
@@ -1411,7 +1423,7 @@ HEADER
         # the same question
     }
 
-    package main2; # Do not to pollute the namespace of "main" with
+    package main_screen; # Do not to pollute the namespace of "main" with
     # the "use" directives below - Still keeping refactoring in mind.
 
     use Test::More;
@@ -1451,10 +1463,7 @@ HEADER
 ####################### Main test suite ###########################
 
 use File::Slurp qw(read_file write_file);
-use File::Copy qw(copy); # which is not a standard requires_for_tests,
-                         # but since My::Module::Build only
-                         # self-tests when maintainer_mode_enabled() is true
-                         # this is no biggie.
+use File::Copy qw(copy);
 use File::Spec::Functions qw(catfile catdir);
 use IO::Pipe;
 # Probably wise to add this in real test suites too:
@@ -1613,7 +1622,7 @@ my $builder = $subclass->new(
 
    build_requires =>    {
 #         'Acme::Pony'    => 0,
-         My::Module::Build->requires_for_tests(),
+         My::Module::Build->requires_for_build(),
    },
 );
 
