@@ -27,7 +27,7 @@ B<Crypt::OpenSSL::CA::Test> - Testing L<Crypt::OpenSSL::CA>
   test "leaky code" => sub {
      leaks_SVs_ok {
         # Do stuff
-     }, -max => 5;
+     }, -max => 6;
   };
 
   skip_next_test "Memchmark needed" if cannot_check_bytes_leaks;
@@ -306,7 +306,7 @@ The name of the test, as in the second argument to L<Test::Builder/ok>.
 
 =item I<< -max => $threshold >>
 
-The minimum number of leaked SVs to look for.  The default is 5.
+The minimum number of leaked SVs to look for.  The default is 6.
 Setting this too low will trigger false positives, as L<Devel::Leak>
 needs a couple of SVs of its own.
 
@@ -321,7 +321,7 @@ sub leaks_SVs_ok (&@) {
     my $handle; my $count = Devel::Leak::NoteSV($handle);
     $coderef->();
     my $consumed_SVs = Devel::Leak::CheckSV($handle) - $count;
-    cmp_ok($consumed_SVs, "<=", ($args{-max} || 5), ($args{-name} || "leaks_SVs_ok"));
+    cmp_ok($consumed_SVs, "<=", ($args{-max} || 6), ($args{-name} || "leaks_SVs_ok"));
 }
 
 
@@ -1480,9 +1480,9 @@ SCRIPT_NOT_OK
 
     like($out, qr/^ok 1/m);
     like($out, qr/^not ok 2/m);
-    like($out, qr/at line/, "errors are reported");
+    like($out, qr/at.* line/, "errors are reported");
     # Grr, "like" won't let $1 through:
-    my ($filename) = $out =~ m/(\S+) at line/;
+    my ($filename) = $out =~ m/(.*) line/;
     unlike($filename, qr/Crypt.*CA/,
            "errors are reported at the proper stack depth");
 };

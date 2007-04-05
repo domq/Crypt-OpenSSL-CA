@@ -1,6 +1,6 @@
 ---
 name: Crypt-OpenSSL-CA
-version: 0.08
+version: 0.09
 author:
   - 'Dominique Quatravaux <domq@cpan.org>'
 abstract: The crypto parts of an X509v3 Certification Authority
@@ -8,28 +8,27 @@ license: perl
 resources:
   license: http://dev.perl.org/licenses/
 requires:
-  Carp: 0
   XSLoader: 0
 build_requires:
   Convert::ASN1: 0.2
-  Data::Dumper: 0
   Devel::Leak: 0
-  DynaLoader: 0
-  Exporter: 0
   Fatal: 0
   File::Find: 0
   File::Path: 0
   File::Slurp: 0
   File::Spec: 0
   File::Spec::Functions: 0
+  File::Spec::Unix: 0
   File::Temp: 0
   FindBin: 0
-  IO::Pipe: 0
+  IO::File: 0
   IPC::Run: 0
   Inline: 0.4
   Inline::C: 0
   MIME::Base64: 0
   Memchmark: 0
+  Module::Build: 0
+  Module::Build::Compat: 0
   Net::SSLeay: 1.25
   POSIX: 0
   Test::Builder: 0
@@ -38,7 +37,7 @@ build_requires:
 provides:
   Crypt::OpenSSL::CA:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.08
+    version: 0.09
   Crypt::OpenSSL::CA::CONF:
     file: lib/Crypt/OpenSSL/CA.pm
   Crypt::OpenSSL::CA::ENGINE:

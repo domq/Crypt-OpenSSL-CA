@@ -147,14 +147,6 @@ C<croak()>s trying (hence the requirement not to have any outstanding
 memory resources allocated in the caller).  Regardless of the outcome,
 C<bio> will be C<BIO_free>()d.
 
-=item I<static void ensure_openssl_stuff_loaded()>
-
-Ensures that various stuff is loaded inside OpenSSL, such as
-C<ERR_load_crypto_strings()>, C<OpenSSL_add_all_digests()> and all
-that jazz.  After this function returns,
-C<$Crypt::OpenSSL::CA::openssl_stuff_loaded> will be 1.  Calling it
-several times has no effect.
-
 =item I<static void sslcroak(char *format, ...)>
 
 Like L<perlapi/croak>, except that a blessed exception of class
@@ -318,17 +310,6 @@ static inline SV* BIO_mem_to_SV(BIO *mem) {
    return retval;
 }
 
-static inline void ensure_openssl_stuff_loaded() {
-    SV* already_loaded = get_sv
-      ("Crypt::OpenSSL::CA::openssl_stuff_loaded", 1);
-    if (SvOK(already_loaded)) { return; }
-    sv_setiv(already_loaded, 1);
-
-    ERR_load_crypto_strings();
-    OpenSSL_add_all_digests();
-    OpenSSL_add_all_algorithms();
-}
-
 #define ERRBUFSZ 512
 #define THISPACKAGE "Crypt::OpenSSL::CA"
 static void sslcroak(char *fmt, ...) {
@@ -346,8 +327,6 @@ static void sslcroak(char *fmt, ...) {
                                    went well with the callback */
     unsigned long sslerr;       /* Will iterate through the OpenSSL
                                    error stack */
-
-    ensure_openssl_stuff_loaded(); /* For error strings */
 
     va_start(ap, fmt);
     vsnprintf(croakbuf, ERRBUFSZ, fmt, ap);
@@ -467,6 +446,30 @@ static ASN1_INTEGER* parse_serial_or_croak(char* hexserial) {
 
 C_BOILERPLATE
 
+=head2 BOOT-time effect
+
+Each C<.so> XS module will be fitted with a C<BOOT> section (see
+L<Inline::C/BOOT> which automatically gets executed upon loading it
+with L<DynaLoader> or L<SSLoader>. The C<BOOT> section is the same for
+all subpackages in L<Crypt::OpenSSL::CA>; it ensures that various
+stuff is loaded inside OpenSSL, such as C<ERR_load_crypto_strings()>,
+C<OpenSSL_add_all_algorithms()> and all that jazz.  After the boot
+code completes, C<$Crypt::OpenSSL::CA::openssl_stuff_loaded> will be
+1, so that the following XS modules can skip that when they in turn
+get loaded.
+
+=cut
+
+sub _c_boot_section { <<"ENSURE_OPENSSL_STUFF_LOADED" }
+    SV* already_loaded = get_sv
+      ("Crypt::OpenSSL::CA::openssl_stuff_loaded", 1);
+    if (SvOK(already_loaded)) { return; }
+    sv_setiv(already_loaded, 1);
+
+    ERR_load_crypto_strings();
+    OpenSSL_add_all_algorithms();
+ENSURE_OPENSSL_STUFF_LOADED
+
 =head1 INTERNALS
 
 The C<< use Crypt::OpenSSL::CA::Inline::C >> idiom described in
@@ -560,6 +563,8 @@ INCLUDES_PARAMS
     VERSION => \$Crypt::OpenSSL::CA::VERSION,
 VERSION_PARAMS
 
+        my $boot_section = _c_boot_section;
+
         eval <<"FAKE_Inline_C_INVOCATION"; die $@ if $@;
 package $package;
 use Inline C => Config =>
@@ -568,6 +573,9 @@ use Inline C => Config =>
 $compile_params
 $version_params
 $openssl_params
+    BOOT => <<'BOOT_SECTION',
+$boot_section
+BOOT_SECTION
 ;
 use Inline C => <<'C_CODE';
 $c_code
