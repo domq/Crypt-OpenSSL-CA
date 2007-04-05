@@ -30,7 +30,7 @@ B<Crypt::OpenSSL::CA::Test> - Testing L<Crypt::OpenSSL::CA>
      }, -max => 6;
   };
 
-  skip_next_test "Memchmark needed" if cannot_check_bytes_leaks;
+  skip_next_test "Proc::ProcessTable needed" if cannot_check_bytes_leaks;
   test "even leakier code" => sub {
      leaks_bytes_ok {
        # Do stuff
@@ -281,13 +281,13 @@ Returns true iff L<Devel::Leak> is unavailable.
 
 =item I<cannot_check_bytes_leaks()>
 
-Returns true iff L<Memchmark> is unavailable.
+Returns true iff L<Proc::ProcessTable> is unavailable.
 
 =cut
 
 sub cannot_check_SV_leaks { ! eval { require Devel::Leak } }
 
-sub cannot_check_bytes_leaks { ! eval { require Memchmark } }
+sub cannot_check_bytes_leaks { ! eval { require Proc::ProcessTable } }
 
 =item I<leaks_SVs_ok($coderef, %named_arguments)>
 
@@ -330,9 +330,9 @@ sub leaks_SVs_ok (&@) {
 =item I<leaks_bytes_ok($coderef, $testname)>
 
 Executes $coderef and asserts (with L<Test::More>) that it doesn't
-leak memory (checked using L<Memchmark>).  As a tester, you should
-arrange for $coderef to manipulate about 100k of memory; smaller leaks
-will not be detected (see I<-max> below).
+leak memory (checked using L<Proc::ProcessTable>).  As a tester, you
+should arrange for $coderef to manipulate about 100k of memory;
+smaller leaks will not be detected (see I<-max> below).
 
 Available named arguments are:
 
@@ -346,7 +346,7 @@ The name of the test, as in the second argument to L<Test::Builder/ok>.
 
 The minimum number of leaked bytes to look for.  The default is
 51200.  Setting this too low will trigger false positives, as
-L<Memchmark> needs to allocate some memory of its own.
+L<Proc::ProcessTable> needs to allocate some memory of its own.
 
 =back
 
@@ -356,19 +356,42 @@ sub leaks_bytes_ok (&@) {
     my ($coderef, %args) = @_;
     local $Test::Builder::Level = $Test::Builder::Level + 1;
 
-    require Memchmark;
-    require POSIX; # Use _exit instead of exit so as not e.g. close the
-    # test result stream
-    my $consumption = Memchmark::memchmark(sub {
-        eval { $coderef->() ; 1 } or do {
-            warn $@;
-            POSIX::_exit(1);
-        };
-        select(undef, undef, undef, 0.2); # Sleeps 0.2 s, leaving time to
-        # memchmark to measure the final memory consumption
-        POSIX::_exit(0);
-    });
-    die "Code under test threw an exception" if $?;
+    require Proc::ProcessTable;
+    require POSIX;
+
+    # Shamelessy lifted from L<Memchmark>
+    sub _find_process {
+        my $pid = shift || $$;
+        my $p=Proc::ProcessTable->new;
+        for (@{$p->table}) {
+            return $_ if $_->pid == $pid;
+        }
+    }
+
+
+    my $semfile = File::Spec->catfile
+        (_tempdir(), sprintf("leaks_bytes_semaphore.%d.%d", $$,
+                             _unique_number()));
+
+    my $size_before = _find_process->size;
+
+    my $pid = fork_and_do {
+        $coderef->();
+        File::Slurp::write_file($semfile, "");
+        sleep(1) while -f $semfile;
+        exit(0);
+    };
+    until (-f $semfile) {
+        select(undef, undef, undef, 0.2); # Sleeps 0.2 s
+        die("Code under test threw an exception or quit (code $?)")
+            if (waitpid($pid, POSIX::WNOHANG()) > 0);
+    }
+
+    my $size_after = _find_process($pid)->size;
+    unlink($semfile);
+    waitpid($pid, 0);
+
+    my $consumption = $size_after - $size_before;
     cmp_ok($consumption, "<", ($args{-max} || 51200),
           $args{-name} || "leaks_bytes_ok");
 }
@@ -1554,7 +1577,7 @@ SCRIPT
 =cut
 
 begin_skipping_tests unless
-    eval { require Devel::Leak; require Memchmark; };
+    eval { require Devel::Leak; require Proc::ProcessTable; };
 test "no leak" => sub {
     leaks_SVs_ok { };
     leaks_bytes_ok { };

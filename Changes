@@ -1,5 +1,9 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.11    05 Apr 2007
+        Got rid of Memchmark; replaced with a homebrew leak checker
+          that also works on VMWare
+
 0.09    05 Apr 2007
         Tested on Gentoo
         Added ::X509->verify
