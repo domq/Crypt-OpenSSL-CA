@@ -219,7 +219,6 @@ any, will work as normal.
         for(my $package = $self->{package};
             $package; $package =~ s/(::|^)[^:]*$//) {
             my $filename = $package;
-            # FIXME: win32 issue assuming / as the (sole) separator?
             $filename =~ s|::|/|g;
 #warn "Considering $filename against $self->{packfilename}";
             next unless ($self->{packfilename} =~
@@ -233,17 +232,17 @@ any, will work as normal.
 =item I<%ENV is standardized>
 
 When running under C<require My::Tests::Below>, %ENV is reset to a
-sane value to avoid freaky side effects when something weird is in the
-PATH or in the locales and this influences some shell tool fired up by
-the test suite.  The original contents of %ENV is stashed away in
-%main::ENVorig in case it is actually needed.
+sane value to avoid freaky side effects when eg the locales are weird
+and this influences some shell tool fired up by the test suite.  The
+original contents of %ENV is stashed away in %main::ENVorig in case it
+is actually needed.
 
 =cut
 
     local %main::ENVorig; %main::ENVorig = %ENV;
+    $ENV{PATH} =~ m|^(.*)$|; # Untaints
     local %ENV = (
-            "PATH"  => "/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin:".
-            "/usr/local/sbin",
+            "PATH"  => $1,
             "DEBUG" => $ENV{"DEBUG"} ? 1 : 0,
            );
 
@@ -444,14 +443,20 @@ use Test::More tests => 11;
 use IO::File;
 use IO::Handle;
 use IPC::Open3;
-use File::Slurp qw(read_file write_file);
 use File::Spec;
-use Fatal qw(mkdir chdir read_file write_file);
+use Fatal qw(mkdir chdir);
 
-###### Tests over the __END__ test section for real modules
+=begin internals
 
-# Runs Perl on $filename, returning what we got on stdout / stderr.
-# $? is also set.
+=head2 Tests over the __END__ test section for real modules
+
+=head3 run_perl($filename)
+
+Runs Perl on $filename, returning what we got on stdout / stderr.
+$? is also set.
+
+=cut
+
 sub run_perl {
     my ($filename) = @_;
     my ($stdin, $stdout) = map { new IO::Handle } (1..2);
@@ -464,6 +469,36 @@ sub run_perl {
     waitpid($pid, 0); # Sets $?
     return $retval;
 }
+
+=head2 read_file($file)
+
+=head2 write_file($file, @lines)
+
+Like in L<File::Slurp>.
+
+=cut
+
+sub read_file {
+  my ($filename) = @_;
+  defined(my $file = IO::File->new($filename, "<")) or die <<"MESSAGE";
+Cannot open $filename for reading: $!.
+MESSAGE
+  return wantarray? <$file> : join("", <$file>);
+}
+
+sub write_file {
+  my ($filename, @contents) = @_;
+  defined(my $file = IO::File->new($filename, ">")) or die <<"MESSAGE";
+Cannot open $filename for writing: $!.
+MESSAGE
+  ($file->print(join("", @contents)) and $file->close()) or die <<"MESSAGE";
+Cannot write into $filename: $!.
+MESSAGE
+}
+
+=end internals
+
+=cut
 
 my $fakemoduledir = My::Tests::Below->tempdir() . "/Fake-Module";
 mkdir($fakemoduledir);

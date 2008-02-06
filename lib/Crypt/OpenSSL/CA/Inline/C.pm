@@ -1,4 +1,5 @@
 #!perl -w
+# -*- coding: utf-8; -*-
 
 use strict;
 use warnings;
@@ -80,9 +81,9 @@ in L<Inline::C>, L<perlxstut>, L<perlguts> and L<perlapi>, C code that
 compiles itself through I<Crypt::OpenSSL::CA::Inline::C> has access to
 the following C functions:
 
-=over
+=head3 char0_value
 
-=item I<static inline char* char0_value(SV* string)>
+  static inline char* char0_value(SV* string);
 
 Returns the string value of a Perl SV, making sure that it exists and
 is zero-terminated beforehand. If C<string> is undef, returns the
@@ -91,19 +92,23 @@ L<perlguts/Working with SVs>, look for the word "Nevertheless" - I'm
 pretty sure there is a macro in Perl's convenience stuff that does
 exactly that already, but I don't know it...
 
-=item I<static inline char* char0_value_or_null(SV* string)>
+=head3 char0_value_or_null
+
+  static inline char* char0_value_or_null(SV* string);
 
 Like L</char0_value>, except that NULL is returned if C<string> is
 undef.
 
-=item I<static inline SV* perl_wrap(class, pointer)>
+=head3 perl_wrap
+
+   static inline SV* perl_wrap(class, pointer);
 
 Creates read-only SV containing the integral value of C<pointer>,
 blesses it into class C<class> and returns it as a SV*.  The return
 value is an adequate Perl wrapper to stand for C<pointer>, as
 demonstrated in L<Inline::C-Cookbook/Object Oriented Inline>.
 
-=item I<perl_unwrap(class, typename, SV*)>
+=head3 perl_unwrap (class, typename, SV*)
 
 The reverse of L</perl_wrap>.  Given a L</perl_wrap>ped SV*, asserts
 that it actually contains an object blessed in class C<class> (lest it
@@ -111,7 +116,9 @@ C<croak>s), extracts the pointer within same, casts it into
 C<typename> and returns it.  This is a macro instead of a static
 inline, so as to be able to perform the polymorphic cast.
 
-=item I<static inline SV* openssl_string_to_SV(char* string)>
+=head3 openssl_string_to_SV
+
+  static inline SV* openssl_string_to_SV(char* string);
 
 Copies over C<string> to a newly-allocated C<SV*> Perl scalar, and
 then frees C<string> using C<OPENSSL_free()>.  Used to transfer
@@ -126,14 +133,18 @@ Check the OpenSSL documentation carefully, and make use of
 L<Crypt::OpenSSL::CA::Test/leaks_bytes_ok> to ascertain experimentally
 that your code doesn't leak memory.
 
-=item I<static inline SV* openssl_buf_to_SV(char* string, int length)>
+=head3 openssl_buf_to_SV
+
+   static inline SV* openssl_buf_to_SV(char* string, int length);
 
 Like L</openssl_string_to_SV> except that the length is specified,
 which allows for C<string> to not contain null characters or not be
 zero-terminated.  Use this form e.g. for ASN.1 buffers returned by
 C<i2d_foobar> OpenSSL functions.
 
-=item I<static inline SV* BIO_mem_to_SV(BIO *bio)>
+=head3 BIO_mem_to_SV
+
+   static inline SV* BIO_mem_to_SV(BIO *bio);
 
 This inline function is intended to be used to return scalar values
 (e.g. PEM strings and RSA moduli) constructed by OpenSSL.  Should be
@@ -147,7 +158,9 @@ C<croak()>s trying (hence the requirement not to have any outstanding
 memory resources allocated in the caller).  Regardless of the outcome,
 C<bio> will be C<BIO_free>()d.
 
-=item I<static void sslcroak(char *format, ...)>
+=head2 sslcroak
+
+   static void sslcroak(char *format, ...);
 
 Like L<perlapi/croak>, except that a blessed exception of class
 I<Crypt::OpenSSL::CA::Error> is generated.  The OpenSSL error
@@ -158,14 +171,15 @@ Note to I<Crypt::OpenSSL::CA> hackers: please select the appropriate
 routine between I<sslcroak> and I<croak>, depending on whether the
 current error condition is being caused by OpenSSL or not; in this way
 callers are able to discriminate errors.  Also, don't be fooled into
-thinking that C<sslcroak> (or, for that matter, C<croak>) is the same
-thing in C and in Perl! Because calling C<sslcroak> will return
-control directly to Perl without running any C code, any and all
-temporary variables that have been allocated from C will fail to be
-de-allocated, thereby causing a memory leak.
+thinking that C<croak>-style error management acts in the same way in
+C and Perl! Because calling C<sslcroak> (or, for that matter,
+L<perlapi/croak>) will return control directly to Perl without running
+any C code, any and all temporary variables that have been allocated
+from C will fail to be de-allocated, thereby causing a memory leak.
 
-Internally, I<sslcroak> works by invoking L</_ssl_croak_callback>
-several times, using a rough equivalent of the following pseudo-code:
+Internally, I<sslcroak> works by invoking
+L<Crypt::OpenSSL::CA/_sslcroak_callback> several times, using a rough
+equivalent of the following pseudo-code:
 
   _sslcroak_callback("-message", $formattedstring);
   _sslcroak_callback("-openssl", $openssl_errorstring_1);
@@ -177,8 +191,10 @@ where $formattedstring is the C<sprintf>-formatted version of the
 arguments passed to I<sslcroak>, and the OpenSSL error strings are
 retrieved using B<ERR_get_error(3)> and B<ERR_error_string(3)>.
 
-=item I<static ASN1_TIME* parse_RFC3280_time(char* datetime,
-              char** errmsg, char* sslerrmsg)>
+=head3 parse_RFC3280_time
+
+  static ASN1_TIME* parse_RFC3280_time(char* datetime,
+                   char** errmsg, char* sslerrmsg);
 
 Parses C<datetime>, a date in "Zulu" format (that is, yyyymmddhhmmssZ,
 with a literal Z at the end), and returns a newly-allocated ASN1_TIME*
@@ -196,16 +212,20 @@ one) of *errmsg and *sslerrmsg is set to an error string, provided
 that they are not NULL.  Caller should thereafter call I<croak> or
 L</sslcroak> respectively.
 
-=item I<static ASN1_TIME* parse_RFC3280_time_or_croak(char* datetime)>
+=head3 parse_RFC3280_time_or_croak
+
+  static ASN1_TIME* parse_RFC3280_time_or_croak(char* datetime);
 
 Like L</parse_RFC3280_time> except that it handles its errors itself and
 will therefore never return NULL.  The caller should not have an
 outstanding temporary variable that must be freed before it returns,
 or a memory leak will be created; if this is the case, use the more
-clunky L</parse_serial> form instead.
+clunky L</parse_RFC3280_time> form instead.
 
-=item I<static ASN1_INTEGER* parse_serial
-              (char* hexserial, char** errmsg, char** sslerrmsg)>
+=head3 parse_serial
+
+  static ASN1_INTEGER* parse_serial
+              (char* hexserial, char** errmsg, char** sslerrmsg);
 
 Parses hexserial, a lowercase, hexadecimal string that starts with
 "0x", and returns it as a newly-allocated C<ASN1_INTEGER> structure
@@ -215,15 +235,15 @@ one) of *errmsg and *sslerrmsg is set to an error string, provided
 that they are not NULL.  Caller should thereafter call I<croak> or
 L</sslcroak> respectively.
 
-=item I<static ASN1_INTEGER* parse_serial_or_croak(char* hexserial)>
+=head3 parse_serial_or_croak
+
+  static ASN1_INTEGER* parse_serial_or_croak(char* hexserial);
 
 Like L</parse_serial> except that it handles its errors itself and
 will therefore never return NULL.  The caller should not have an
 outstanding temporary variable that must be freed before it returns,
 or a memory leak will be created; if this is the case, use the more
 clunky L</parse_serial> form instead.
-
-=back
 
 =cut
 
@@ -242,7 +262,7 @@ sub _c_boilerplate { <<'C_BOILERPLATE'; }
 #endif
 
 static inline char* char0_value_or_null(SV* perlscalar) {
-     unsigned int length; char* retval;
+     STRLEN length; char* retval;
 
      SvPV(perlscalar, length);
      if (! SvPOK(perlscalar)) { return NULL; }
@@ -450,7 +470,7 @@ C_BOILERPLATE
 
 Each C<.so> XS module will be fitted with a C<BOOT> section (see
 L<Inline::C/BOOT> which automatically gets executed upon loading it
-with L<DynaLoader> or L<SSLoader>. The C<BOOT> section is the same for
+with L<DynaLoader> or L<XSLoader>. The C<BOOT> section is the same for
 all subpackages in L<Crypt::OpenSSL::CA>; it ensures that various
 stuff is loaded inside OpenSSL, such as C<ERR_load_crypto_strings()>,
 C<OpenSSL_add_all_algorithms()> and all that jazz.  After the boot
@@ -475,9 +495,7 @@ ENSURE_OPENSSL_STUFF_LOADED
 The C<< use Crypt::OpenSSL::CA::Inline::C >> idiom described in
 L</SYNOPSIS> is implemented in terms of L<Inline>.
 
-=over
-
-=item I<%c_code>
+=head3 %c_code
 
 A lexical variable that L</import> uses to accumulate all the C code
 submitted by L<Crypt::OpenSSL::CA>.  Keys are package names, and
@@ -485,15 +503,15 @@ values are snippets of C.
 
 =cut
 
-my %code;
+my %c_code;
 
 use Inline::C ();
 
-=item I<import()>
+=head3 import ()
 
 Called whenever one of the C<< use Crypt::OpenSSL::CA::Inline::C "foo"
 >> pragmas (listed in L</SYNOPSIS>) is seen by Perl; performs the
-actual magic of the module.  Stashes everything into L</%code>, and
+actual magic of the module.  Stashes everything into L</%c_code>, and
 invokes L</compile_everything> at the end.
 
 =cut
@@ -506,17 +524,17 @@ sub import {
     return $class->compile_everything if ($c_code eq "__END__");
 
     my ($package, $file, $line) = caller;
-    $code{$package} ||= _c_boilerplate;
-    $code{$package} .= sprintf(qq'#line %d "%s"\n', $line + 1, $file)
+    $c_code{$package} ||= _c_boilerplate;
+    $c_code{$package} .= sprintf(qq'#line %d "%s"\n', $line + 1, $file)
         . $c_code;
     return;
 }
 
-=item I<compile_everything()>
+=head3 compile_everything ()
 
 Called when L</the "__END__" pragma> is seen.  Invokes
 L<Inline/import> once for every package (that is, every key in
-L</%code>), with the following tweaks:
+L</%c_code>), with the following tweaks:
 
 =over
 
@@ -536,7 +554,7 @@ the caller-provided C code.
 
 sub compile_everything {
     my ($class) = @_;
-    keys %code; while(my ($package, $c_code) = each %code) {
+    keys %c_code; while(my ($package, $c_code) = each %c_code) {
         my $compile_params =
             ($class->full_debugging ? <<"WITH_DEBUGGING" :
     OPTIMIZE => "-g",
@@ -550,12 +568,12 @@ WO_DEBUGGING
             (<<"LIBS_PARAMS",
     LIBS => "-lcrypto -lssl%s",
 LIBS_PARAMS
-             ( $ENV{BUILD_OPENSSL_LIBDIR} ?
-               " -L$ENV{BUILD_OPENSSL_LIBDIR}" : ""));
-        if ($ENV{BUILD_OPENSSL_INCLUDEDIR}) {
-            $openssl_params .= <<"INCLUDES_PARAMS";
-    INC => "-I$ENV{BUILD_OPENSSL_INCLUDEDIR}",
-INCLUDES_PARAMS
+             ( $ENV{BUILD_OPENSSL_LDFLAGS} ?
+               " $ENV{BUILD_OPENSSL_LDFLAGS}" : ""));
+        if ($ENV{BUILD_OPENSSL_CFLAGS}) {
+            $openssl_params .= <<"CFLAGS_PARAMS";
+    INC => "$ENV{BUILD_OPENSSL_CFLAGS}",
+CFLAGS_PARAMS
         }
 
         my $version_params =
@@ -584,7 +602,7 @@ FAKE_Inline_C_INVOCATION
     }
 }
 
-=item I<full_debugging>
+=head3 full_debugging
 
 Returns true iff the environment variable C<FULL_DEBUGGING> is set.
 This causes the C code to be compiled without optimization, allowing
@@ -601,7 +619,7 @@ on a one-shot basis by developpers who have a specific need for it.
 
 sub full_debugging { ! ! $ENV{FULL_DEBUGGING} }
 
-=item I<installed_version>
+=head3 installed_version
 
 Returns what the source code of this module will look like (with POD
 and everything) after it is installed.  The installed version is a dud
@@ -667,25 +685,23 @@ INSTALLED_VERSION
 
 =end this_pod_is_not_ours
 
-=back
-
 =head1 ENVIRONMENT VARIABLES
 
 =head2 FULL_DEBUGGING
 
 See L</full_debugging>
 
-=head2 BUILD_OPENSSL_INCLUDEDIR
+=head2 BUILD_OPENSSL_CFLAGS
 
-Contains the path to the OpenSSL header files; passed on to
-L<Inline::C/INC> by L</compile_everything> in order to clue the
-compiler into finding them.
+Contains the CFLAGS to pass so as to compile C code that links against
+OpenSSL; eg C<< -I/usr/lib/openssl/include >> or something.  Passed on
+to L<Inline::C/INC> by L</compile_everything>.
 
-=head2 BUILD_OPENSSL_LIBDIR
+=head2 BUILD_OPENSSL_LDFLAGS
 
-Contains the path to the OpenSSL libraries; passed on to
-L<Inline::C/LIBS> by L</compile_everything> in order to clue the
-linker into finding them.
+Contains the LDFLAGS to pass so as to link with the OpenSSL libraries;
+eg C<< -I/usr/lib/openssl/lib >> or something.  Passed on to
+L<Inline::C/LIBS> by L</compile_everything>.
 
 =head1 SEE ALSO
 
@@ -898,10 +914,11 @@ test "sslcroak()" => sub {
     is(ref($@), "Crypt::OpenSSL::CA::Error");
     is(ref($@->{-openssl}), "ARRAY");
     cmp_ok(scalar(@{$@->{-openssl}}), ">", 0);
-    # FIXME: absolute positions in stack probably not robust enough.
-    like($@->{-openssl}->[0], qr/fopen/);
-    like($@->{-openssl}->[1], qr/no such file/); # Also checks that
-    # message wasn't truncated
+    my ($start_of_errors) = grep { $@->{-openssl}->[$_] =~ m/fopen/ }
+        (0..$#{$@->{-openssl}});
+    ok(defined($start_of_errors));
+    like($@->{-openssl}->[$start_of_errors + 1],
+         qr/no such file/); # Also checks that message wasn't truncated
 
     unless (cannot_check_bytes_leaks) {
         leaks_bytes_ok {

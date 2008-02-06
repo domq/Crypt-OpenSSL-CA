@@ -148,8 +148,9 @@ particular test under Emacs perldb is therefore as simple as typing:
 If a relative path is passed (as shown), it is interpreted relative to
 the current directory set by Emacs (which, except under very bizarre
 conditions, will be the directory of the file currently being
-edited). The verbose above applies here by default, conveniently
-causing the test script to run in verbose mode in the debugger.
+edited). The verbose switch above applies here by default,
+conveniently causing the test script to run in verbose mode in the
+debugger.
 
 Like the original L<Module::Build/test>, C<./Build test> accepts
 supplemental key=value command line switches, as exemplified above
@@ -166,218 +167,18 @@ debug L<Inline::C> code in a tight tweak-run-tweak-run loop, a
 situation in which the MD5-on-C-code feature of L<Inline> saves a lot
 of rebuilds.
 
-=back
+=item I<full_debugging=1>
 
-=cut
-
-package My::Module::Build;
-use strict;
-use warnings;
-use base "Module::Build";
-
-use IO::File;
-use File::Path;
-use File::Spec::Functions qw(catfile catdir);
-use File::Spec::Unix ();
-use File::Find;
-use File::Slurp;
-
-=head1 REFERENCE
-
-=head2 Constructors and Class Methods
-
-=over
-
-=item I<new(%named_options)>
-
-Overloaded from parent class in order to call
-L</check_maintainer_dependencies> if L</maintainer_mode_enabled> is
-true.  Also sets the C<recursive_test_files> property to true by
-default (see L<Module::Build/test_files>), since I like to store
-maintainer-only tests in C<t/maintainer> (as documented in
-L</find_test_files>).
-
-In addition to the %named_options documented in L<Module::Build/new>,
-I<My::Module::Build> provides support for the following switches:
-
-=over
-
-=item I<< add_to_no_index => $data_structure >>
-
-Appends the aforementioned directories and/or namespaces to the list
-that L</ACTION_distmeta> stores in META.yml.  Useful to hide some of
-the Perl modules from the CPAN index.
+Sets the FULL_DEBUGGING environment variable to 1 while running
+C<./Build test>, in addition to any environment customization already
+performed by L</customize_env>.  Packages of mine that use L<Inline>
+enable extra debugging when this environment variable is set.
 
 =back
 
-=cut
+=head3 Dependent Option Graph
 
-sub new {
-    my ($class, %opts) = @_;
-    $opts{recursive_test_files} = 1 if
-        (! defined $opts{recursive_test_files});
-    my $self = $class->SUPER::new(%opts);
-    if ($self->maintainer_mode_enabled()) {
-        print "Running specific maintainer checks...\n";
-        $self->check_maintainer_dependencies();
-    }
-    $self->_process_options;
-    $self;
-}
-
-=item I<requires_for_build()>
-
-Returns a list of packages that are required by I<My::Module::Build>
-itself, and should therefore be appended to the C<build_requires> hash
-as shown in L</SYNOPSIS>.
-
-=cut
-
-sub requires_for_build {
-       ('IO::File'              => 0,
-        'File::Path'            => 0,
-        'File::Spec::Functions' => 0,
-        'File::Spec::Unix'      => 0,
-        'File::Find'            => 0,
-        'File::Slurp'           => 0,
-        'Module::Build'         => 0,
-        'Module::Build::Compat' => 0,
-        'FindBin'               => 0, # As per L</SYNOPSIS>
-        'File::Spec' => 0, # For the heck of it, as we already require
-                           # two File::Spec::*'s
-
-        # The following are actually requirements for tests:
-        'File::Temp' => 0,  # for tempdir() in My::Tests::Below
-        'File::Slurp' => 0, # a common occurence in my tests
-        'Fatal' => 0, # Used to cause tests to die early if fixturing
-                      # fails, see sample in this module's test suite
-                      # (at the bottom of this file)
-       );
-}
-
-{
-    no warnings "once";
-    *requires_for_tests = \&requires_for_build; # OBSOLETE misnomer
-}
-
-=back
-
-=head2 Methods that can be called from inside Build.PL
-
-=over
-
-=item I<maintainer_mode_enabled()>
-
-Returns true iff we are running "./Build.PL" or "./Build" off a
-revision control system of some kind. Returns false in all other
-situations, especially if we are running on an untarred package
-downloaded from CPAN.
-
-=cut
-
-sub maintainer_mode_enabled {
-    my $self = shift;
-    return 1 if -d catdir($self->base_dir, ".svn");
-    my $svkcmd = sprintf("svk info '%s' 2>%s",
-                         catdir($self->base_dir, "Build.PL"),
-                         File::Spec->devnull);
-    `$svkcmd`; return 1 if ! $?;
-    return 0;
-}
-
-=item I<check_maintainer_dependencies()>
-
-Checks that the modules required for B<modifying> the CPAN package are
-installed on the target system, and displays a friendly, non-fatal
-message otherwise. This method is automatically run from L</new> if
-appropriate (that is, if L</maintainer_mode_enabled> is true).
-
-=cut
-
-sub check_maintainer_dependencies {
-    my $self = shift;
-    unless ($self->check_installed_status('YAML', 0)->{ok})
-        { $self->show_warning(<<"MESSAGE"); }
-
-The YAML module from CPAN is missing on your system.
-
-YAML is required for the "./Build distmeta" operation. You have to run
-that command to regenerate META.yml every time you add a new .pm,
-change dependencies or otherwise alter the namespace footprint of this
-CPAN package. You will therefore only be able to contribute small
-bugfixes until you install YAML.
-
-MESSAGE
-    foreach my $testmod (qw(Test::NoBreakpoints
-                            Test::Pod Test::Pod::Coverage)) {
-        unless ($self->check_installed_status($testmod, 0)->{ok})
-            { $self->show_warning(<<"MESSAGE")};
-
-The $testmod module from CPAN is missing on your system.
-
-One of the tests in t/maintainer will fail because of that.  Please
-install the corresponding module to run the full test suite.
-
-MESSAGE
-    }
-}
-
-=item I<show_warning($message)>
-
-Displays a multi-line message $message to the user, and prompts
-him/her to "Press RETURN to continue".
-
-=cut
-
-sub show_warning {
-    my ($self, $message) = @_;
-    $message = "\n$message" until ($message =~ m/^\n\n/);
-    $message .= "\n" until ($message =~ m/\n\n$/);
-    warn $message;
-    $self->prompt("Press RETURN to continue");
-    1;
-}
-
-=item I<show_fatal_error($message)>
-
-Like L</show_warning>, but throws an exception after displaying
-$message.
-
-=cut
-
-sub show_fatal_error {
-    my ($self, $message) = @_;
-    $self->show_warning($message);
-    die "Fatal error, bailing out.\n";
-}
-
-=item I<use_blib()>
-
-=item I<use_blib($boolean)>
-
-Returns false if the user specified C<use_blib=0> on the command line,
-and true otherwise.  See L</Extended C<test> action> for details.  The
-form with a parameter allows one to set the value that will
-subsequently be returned by I<use_blib>, thereby overriding the
-command line.
-
-=cut
-
-sub use_blib {
-    my $self = shift;
-    if (! @_) {
-        return 1 if (! exists $self->{args}->{use_blib});
-        return ! ! $self->{args}->{use_blib};
-    } else {
-        $self->{use_blib} = ! ! shift;
-    }
-}
-
-=back
-
-=head2 Dependent Option Graph
-
-This API is a wrapper around L<Module::Build/prompt>,
+This feature wraps around L<Module::Build/prompt>,
 L<Module::Build/get_options> and L<Module::Build/notes> to streamline
 the programming of optional features into a ./Build.PL script. Here is
 a short synopsis for this feature:
@@ -467,6 +268,364 @@ undef value).
 
 =back
 
+=head1 REFERENCE
+
+=cut
+
+package My::Module::Build;
+use strict;
+use warnings;
+use base "Module::Build";
+
+use IO::File;
+use File::Path qw(mkpath);
+use File::Spec::Functions qw(catfile catdir splitpath splitdir);
+use File::Basename qw(dirname);
+use File::Spec::Unix ();
+use File::Find;
+
+=begin internals
+
+=head2 Global variables
+
+=head3 $running_under_emacs_debugger
+
+Set by L</_massage_ARGV> if (you guessed it) we are currently running
+under the Emacs debugger.
+
+=cut
+
+our $running_under_emacs_debugger;
+
+=head2 Constants
+
+=head3 is_win32
+
+Your usual bugware-enabling OS checks.
+
+=cut
+
+use constant is_win32 => scalar($^O =~ /^(MS)?Win32$/);
+
+=head2 read_file($file)
+
+=head2 write_file($file, @lines)
+
+Like in L<File::Slurp>.
+
+=cut
+
+sub read_file {
+  my ($filename) = @_;
+  defined(my $file = IO::File->new($filename, "<")) or die <<"MESSAGE";
+Cannot open $filename for reading: $!.
+MESSAGE
+  return wantarray? <$file> : join("", <$file>);
+}
+
+sub write_file {
+  my ($filename, @contents) = @_;
+  defined(my $file = IO::File->new($filename, ">")) or die <<"MESSAGE";
+Cannot open $filename for writing: $!.
+MESSAGE
+  ($file->print(join("", @contents)) and $file->close()) or die <<"MESSAGE";
+Cannot write into $filename: $!.
+MESSAGE
+}
+
+=end internals
+
+=head2 Constructors and Class Methods
+
+These are intended to be called directly from Build.PL
+
+=over
+
+=item I<new(%named_options)>
+
+Overloaded from parent class in order to call
+L</check_maintainer_dependencies> if L</maintainer_mode_enabled> is
+true.  Also sets the C<recursive_test_files> property to true by
+default (see L<Module::Build/test_files>), since I like to store
+maintainer-only tests in C<t/maintainer> (as documented in
+L</find_test_files>).
+
+In addition to the %named_options documented in L<Module::Build/new>,
+I<My::Module::Build> provides support for the following switches:
+
+=over
+
+=item I<< add_to_no_index => $data_structure >>
+
+Appends the aforementioned directories and/or namespaces to the list
+that L</ACTION_distmeta> stores in META.yml.  Useful to hide some of
+the Perl modules from the CPAN index.
+
+=back
+
+=cut
+
+sub new {
+    my ($class, %opts) = @_;
+    $opts{recursive_test_files} = 1 if
+        (! defined $opts{recursive_test_files});
+    my $self = $class->SUPER::new(%opts);
+    if ($self->maintainer_mode_enabled()) {
+        print "Running specific maintainer checks...\n";
+        $self->check_maintainer_dependencies();
+    }
+    $self->_process_options;
+    $self;
+}
+
+=item I<requires_for_build()>
+
+Returns a list of packages that are required by I<My::Module::Build>
+itself, and should therefore be appended to the C<build_requires> hash
+as shown in L</SYNOPSIS>.
+
+=cut
+
+sub requires_for_build {
+       ('IO::File'              => 0,
+        'File::Path'            => 0,
+        'File::Spec'            => 0,
+        'File::Spec::Functions' => 0,
+        'File::Spec::Unix'      => 0,
+        'File::Find'            => 0,
+        'Module::Build'         => 0,
+        'Module::Build::Compat' => 0,
+        'FindBin'               => 0, # As per L</SYNOPSIS>
+
+        # The following are actually requirements for tests:
+        'File::Temp' => 0,  # for tempdir() in My::Tests::Below
+        'Fatal' => 0, # Used to cause tests to die early if fixturing
+                      # fails, see sample in this module's test suite
+                      # (at the bottom of this file)
+       );
+}
+
+{
+    no warnings "once";
+    *requires_for_tests = \&requires_for_build; # OBSOLETE misnomer
+}
+
+=item I<maintainer_mode_enabled()>
+
+Returns true iff we are running "./Build.PL" or "./Build" off a
+revision control system of some kind. Returns false in all other
+situations, especially if we are running on an untarred package
+downloaded from CPAN.
+
+=cut
+
+sub maintainer_mode_enabled {
+    my $self = shift;
+    foreach my $vc_dir (qw(CVS .svn .hg .git)) {
+        return 1 if -d catdir($self->base_dir, $vc_dir);
+    }
+   
+    my $full_cmd = sprintf("yes n | svk info '%s' 2>%s",
+                           catdir($self->base_dir, "Build.PL"),
+                           File::Spec->devnull);
+    `$full_cmd`; return 1 if ! $?;
+
+    return 0;
+}
+
+=item I<check_maintainer_dependencies()>
+
+Checks that the modules required for B<modifying> the CPAN package are
+installed on the target system, and displays a friendly, non-fatal
+message otherwise. This method is automatically run from L</new> if
+appropriate (that is, if L</maintainer_mode_enabled> is true).
+
+=cut
+
+sub check_maintainer_dependencies {
+    my $self = shift;
+    unless ($self->check_installed_status('YAML', 0)->{ok})
+        { $self->show_warning(<<"MESSAGE"); }
+
+The YAML module from CPAN is missing on your system.
+
+YAML is required for the "./Build distmeta" operation. You have to run
+that command to regenerate META.yml every time you add a new .pm,
+change dependencies or otherwise alter the namespace footprint of this
+CPAN package. You will therefore only be able to contribute small
+bugfixes until you install YAML.
+
+MESSAGE
+    foreach my $testmod (qw(Test::NoBreakpoints
+                            Test::Pod Test::Pod::Coverage)) {
+        unless ($self->check_installed_status($testmod, 0)->{ok})
+            { $self->show_warning(<<"MESSAGE")};
+
+The $testmod module from CPAN is missing on your system.
+
+One of the tests in t/maintainer will fail because of that.  Please
+install the corresponding module to run the full test suite.
+
+MESSAGE
+    }
+}
+
+=item I<show_warning($message)>
+
+Displays a multi-line message $message to the user, and prompts
+him/her to "Press RETURN to continue".
+
+=cut
+
+sub show_warning {
+    my ($self, $message) = @_;
+    $message = "\n$message" until ($message =~ m/^\n\n/);
+    $message .= "\n" until ($message =~ m/\n\n$/);
+    warn $message;
+    $self->prompt("Press RETURN to continue");
+    1;
+}
+
+=item I<show_fatal_error($message)>
+
+Like L</show_warning>, but throws an exception after displaying
+$message.
+
+=cut
+
+sub show_fatal_error {
+    my ($self, $message) = @_;
+    $self->show_warning($message);
+    die "Fatal error, bailing out.\n";
+}
+
+=back
+
+=head2 Methods
+
+These are intended to be called directly from Build.PL
+
+=over
+
+=item I<topir>
+
+Returns the directory in which C<Build.PL> resides.
+
+=cut
+
+sub topdir {
+    # TODO: probably not good enough in some cases.
+    require FindBin;
+    no warnings "once";
+    return $FindBin::Bin;
+}
+
+=item I<package2filename($packagename)>
+
+Converts $packagename (e.g. C<Foo::Bar>) into its OS-specific notation
+(e.g. C<Foo/Bar.pm>).
+
+=cut
+
+sub package2filename {
+    my ($self, $package) = @_;
+    my @components = split m/::/, $package;
+    $components[$#components] .= ".pm";
+    return catfile(@components);
+}
+
+=item I<process_Inline_C_file($filename, @preload_modules)>
+
+Arranges for L<Inline::C> code contained in $filename to be compiled
+into .bs's and .so's.  @preload_modules is a list of Perl packages (in
+Perl C<use> notation, eg C<Foo::Bar> instead of C<Foo/Bar.pm>) that
+should be loaded with C<use> before starting the L<Inline> install
+process.  Uses a stamp file in C<blib/stamp> to avoid compiling anew
+if neither $filename nor @preload_modules changed.
+
+=cut
+
+sub process_Inline_C_file {
+    my ($self, $filename, @preload_modules) = @_;
+
+    my $stampfile = do {
+        my ($volume, $dir, $base) = splitpath($filename);
+        catfile(qw(blib stamp Inline-C),
+                 join("_", splitdir($dir), $base));
+    };
+    return if $self->up_to_date
+                ([$filename,
+                  map { catfile("lib", $self->package2filename($_)) }
+                  @preload_modules], [$stampfile]);
+
+    # Remove any leftovers from a (failed) previous run.
+    do { unlink($_) or die "Cannot unlink($_): $!" } for glob("*.inl");
+
+    # And now some ugly kludge to make everything hold together.
+    # Inline::C wants to use MakeMaker; we don't.  So let's call it in
+    # a sub-Perl.
+    my $version = $self->dist_version;
+    my $module_name = $self->module_name;
+
+    my $script = <<"SET_VERSION";
+BEGIN { \$${module_name}::VERSION = '$version' ; }
+SET_VERSION
+    $script .= "use $_; " foreach (@preload_modules);
+    $script .= <<"ACTIVATE_INLINE_COMPILE";
+use Inline qw(_INSTALL_);
+require "$filename";
+ACTIVATE_INLINE_COMPILE
+    $script =~ s/\n/ /g;
+
+    my @cmdline = ($^X, "-I" => catdir($self->topdir, "lib"),
+                   -e => $script, $version, catdir(qw(blib arch)));
+    warn(join(" ", @cmdline, "\n"));
+    local %ENV = $self->customize_env(%ENV);
+    system(@cmdline);
+    die "Command exited with status " . ($? >> 8) if $?;
+
+    # Remove the leftovers again.
+    do { unlink($_) or die "Cannot unlink($_): $!" } for glob("*.inl");
+    rmdir("arch");
+
+    # Update timestamp
+    if (! -d (my $stampdir = dirname($stampfile))) {
+        mkpath($stampdir, 0, 0777)
+            or die "cannot create directory $stampdir: $!";
+    }
+    local *STAMP;
+    open(STAMP, ">>", $stampfile)
+        or die "cannot create or update timestamp file $stampfile: $!";
+    close(STAMP);
+    utime((time) x 2, $stampfile);
+}
+
+=item I<use_blib()>
+
+=item I<use_blib($boolean)>
+
+Returns false if the user specified C<use_blib=0> on the command line,
+and true otherwise.  See L</Extended C<test> action> for details.  The
+form with a parameter allows one to set the value that will
+subsequently be returned by I<use_blib>, thereby overriding the
+command line.
+
+=cut
+
+sub use_blib {
+    my $self = shift;
+    if (! @_) {
+        return 1 if (! exists $self->{args}->{use_blib});
+        return ! ! $self->{args}->{use_blib};
+    } else {
+        $self->{args}->{use_blib} = ! ! shift;
+    }
+}
+
+=back
+
+=head2 Dependent Option Graph Methods
+
 =cut
 
 # These "use" statements are specific to the dependent option graph
@@ -474,8 +633,6 @@ undef value).
 use Getopt::Long;
 use Carp;
 use overload; # for overload::StrVal
-
-=head3 Methods
 
 =over
 
@@ -490,14 +647,14 @@ I<option_value()> will die with a messsage that starts with the word
 
 Answers to questions are persisted using Module::Build's I<< ->notes
 >> mechanism: outside the option declaration subs,
-I<option_value($optionname)> is therefore an alias for
-I<notes("option:$optionname")>.
+I<option_value("foo-bar")> is therefore an alias for
+I<notes("option:foo_bar")>.
 
 =cut
 
 sub option_value {
-	my ($self, $key) = @_;
-
+    my ($self, $key) = @_;
+    $key =~ s/-/_/g;
     my $noteskey = "option:$key";
     my $cached = $self->notes($noteskey);
     return $cached if defined $cached;
@@ -506,478 +663,7 @@ sub option_value {
     return $answer;
 }
 
-=back
-
 =begin internals
-
-=head1 INTERNAL DOCUMENTATION
-
-This section describes how My::Module::Build works internally. It
-should be useful only to people who intend to modify it.
-
-=head2 Global variables
-
-=over
-
-=item I<$running_under_emacs_debugger>
-
-Set by L</_massage_ARGV> if (you guessed it) we are currently running
-under the Emacs debugger.
-
-=cut
-
-our $running_under_emacs_debugger;
-
-=back
-
-=head2 Constants
-
-=over
-
-=item is_win32
-
-Your usual bugware-enabling OS checks.
-
-=cut
-
-use constant is_win32 => scalar($^O =~ /^(MS)?Win32$/);
-
-=back
-
-=head2 Other Public Methods
-
-Those methods will be called automatically from within the generated
-./Build, but on the other hand one probably shouldn't call them
-directly from C<Build.PL> .
-
-=over
-
-=item I<subclass(%named_arguments)>
-
-Overloaded from L<Module::Build::Base> to set @ISA at compile time and
-to the correct value in the sub-classes generated from the C<< code >>
-named argument. We need @ISA to be set up at compile-time so that the
-method attributes work correctly; also we work around a bug present in
-Module::Build 0.26 and already fixed in the development branch whence,
-ironically, ->subclass does not work from a subclass.
-
-=cut
-
-sub subclass {
-    my ($pack, %opts) = @_;
-
-    $opts{code} = <<"KLUDGE_ME_UP" if defined $opts{code};
-# Kludge inserted by My::Module::Build to work around some brokenness
-# in the \@ISA setup code above:
-use base "My::Module::Build";
-our \@ISA;
-BEGIN { our \@ISAorig = \@ISA; }
-\@ISA = our \@ISAorig;
-
-$opts{code}
-KLUDGE_ME_UP
-
-    return $pack->SUPER::subclass(%opts);
-}
-
-=item I<ACTION_test>
-
-Overloaded to add t/lib to the test scripts' @INC (we sometimes put
-helper test classes in there), and also to implement the features
-described in L</Extended test action>.  See also L</_massage_ARGV> for
-more bits of the Emacs debugger support code.
-
-=back
-
-=cut
-
-sub ACTION_test {
-    my $self = shift;
-
-    local @INC = @INC;
-    push @INC, catdir($self->base_dir, "t", "lib");
-
-    my @files_to_test = map {
-        our $initial_cwd; # Set at BEGIN time, see L<_startperl>
-        File::Spec->rel2abs($_, $initial_cwd)
-    } (@{$self->{args}->{ARGV} || []});
-
-    if ($running_under_emacs_debugger && @files_to_test == 1) {
-        # We want to run this script under a slave_editor debugger, so
-        # as to implement the documented trick. The simplest way
-        # (although inelegant) is to bypass Module::Build and
-        # Test::Harness entirely, and run the child Perl
-        # ourselves. Most of the code below was therefore cobbled
-        # together from the real T::H version 2.40 and M::B 0.26
-        $self->depends_on('code'); # As in original ACTION_test
-
-        # Compute adequate @INC:
-        my @inc = do { my %inc_dupes; grep !$inc_dupes{$_}++, @INC };
-        if (is_win32) { s/[\\\/+]$// foreach @inc; }
-        # Add blib/lib and blib/arch like the original ACTION_test does:
-        if ($self->use_blib) {
-            unshift @inc, catdir($self->base_dir(), $self->blib, 'lib'),
-                catdir($self->base_dir(), $self->blib, 'arch');
-        } else {
-            unshift @inc, catdir($self->base_dir(), 'lib');
-        }
-        # Parse shebang line to set taintedness properly:
-        local *TEST;
-        open(TEST, $files_to_test[0]) or die
-            "Can't open $files_to_test[0]. $!\n";
-        my $shebang = <TEST>;
-        close(TEST) or print "Can't close $files_to_test[0]. $!\n";
-        my $taint = ( $shebang =~ /^#!.*\bperl.*\s-\w*([Tt]+)/ );
-        my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
-        system($perl, "-d",
-               ($taint ? ("-T") : ()),
-               (map { ("-I" => $_) } @inc),
-               $files_to_test[0], "-emacs");
-        return;
-    }
-
-    # Localize stuff in order to fool our superclass for fun & profit
-
-    local $self->{FORCE_find_test_files_result}; # See L</find_test_files>
-    $self->{FORCE_find_test_files_result} = \@files_to_test if
-        @files_to_test;
-    # DWIM for ->{verbose} (see POD)
-    local $self->{properties} = { %{$self->{properties}} };
-    if (@files_to_test == 1) {
-        $self->{properties}->{verbose} = 1 if
-            (! defined $self->{properties}->{verbose});
-    }
-
-    # use_blib=0 feature redux
-    no warnings "once";
-    local *blib = sub {
-        my $self = shift;
-
-        return File::Spec->curdir if ! $self->use_blib;
-        return $self->SUPER::blib(@_);
-    };
-
-
-    $self->SUPER::ACTION_test(@_);
-}
-
-=item I<ACTION_distmeta>
-
-Overloaded to ensure that .pm modules in inc/ don't get indexed and
-that the C<add_to_no_index> parameter to L</new> is honored.
-
-=cut
-
-sub ACTION_distmeta {
-    my $self = shift;
-
-    eval { require YAML } or die ($@ . <<"MESSAGE");
-
-YAML is required for distmeta to produce accurate results. Please
-install it and re-run this command.
-
-MESSAGE
-
-    # Steals a reference to the YAML object that will be constructed
-    # by the parent class (duhh)
-    local our $orig_yaml_node_new = \&YAML::Node::new;
-    local our $node;
-    no warnings "redefine";
-    local *YAML::Node::new = sub {
-        $node = $orig_yaml_node_new->(@_);
-    };
-
-    my $retval = $self->SUPER::ACTION_distmeta;
-    die "Failed to steal the YAML node" unless defined $node;
-
-    $node->{no_index} = $self->{properties}->{add_to_no_index} || {};
-    $node->{no_index}->{directory} ||= [];
-    unshift(@{$node->{no_index}->{directory}}, qw(examples inc t),
-            (map { File::Spec::Unix->catdir("lib", split m/::/) }
-             (@{$node->{no_index}->{namespace} || []})));
-
-    foreach my $package (keys %{$node->{provides}}) {
-        delete $node->{provides}->{$package} if
-            (grep {$package =~ m/^\Q$_\E/}
-             @{$node->{no_index}->{namespace} || []});
-        delete $node->{provides}->{$package} if
-            (grep {$package eq $_}
-             @{$node->{no_index}->{package} || []});
-    }
-
-    my $metafile =
-        $self->can("metafile") ? # True as of Module::Build 0.2805
-            $self->metafile() : $self->{metafile};
-    # YAML API changed after version 0.30
-    my $yaml_sub =
-        ($YAML::VERSION le '0.30' ? \&YAML::StoreFile : \&YAML::DumpFile);
-    $yaml_sub->($metafile, $node)
-        or die "Could not write to $metafile: $!";
-;
-}
-
-=item I<process_pm_files>
-
-Called internally in Build to convert lib/**.pm files into their
-blib/**.pm counterpart; overloaded here to remove the test suite (see
-L</Unit tests>) and standardize the copyright of the files authored by
-me.
-
-=cut
-
-sub process_pm_files {
-    no warnings "once";
-    local *copy_if_modified = \*process_pm_file_if_modified;
-    my $self = shift;
-    return $self->SUPER::process_pm_files(@_);
-}
-
-=item I<process_pm_file_if_modified(%args)>
-
-Does the same as L<copy_file_if_modified> (which it actually replaces
-while L<process_pm_files> runs), except that the L</new_pm_filter> is
-applied instead of performing a vanilla copy as L<Module::Build> does.
-
-=cut
-
-sub process_pm_file_if_modified {
-    my ($self, %args) = @_;
-    my ($from, $to) = @args{qw(from to)};
-    return if $self->up_to_date($from, $to); # Already fresh
-
-    # Create parent directories
-    File::Path::mkpath(File::Basename::dirname($to), 0, 0777);
-
-    # Do a filtering copy
-    print "$from -> $to\n" if $args{verbose};
-    die "Cannot open $from for reading: $!\n" unless
-        (my $fromfd = new IO::File($from, "r"));
-    die "Cannot open $to for writing: $!\n" unless
-        (my $tofd = new IO::File($to, "w"));
-
-    my $filter = $self->new_pm_filter;
-    while(my $line = <$fromfd>) {
-        my $moretext = $filter->filter($line);
-        if (defined($moretext) && length($moretext)) {
-            $tofd->print($moretext) or
-                die "Cannot write to $to: $!\n";
-        }
-        last if $filter->eof_reached();
-    }
-    $tofd->close() or die "Cannot close to $to: $!\n";
-}
-
-=item I<new_pm_filter>
-
-Creates and returns a fresh filter object (see
-L</My::Module::Build::PmFilter Ancillary Class>) that will be used by
-L</process_pm_file_if_modified> to process the text of the .pm files.
-Subclasses may find it convenient to overload I<new_pm_filter> in
-order to provide a different filter.  The filter object should obey
-the API set forth in L</My::Module::Build::PmFilter Ancillary Class>,
-although it need not inherit from same.
-
-=cut
-
-sub new_pm_filter { My::Module::Build::PmFilter->new }
-
-=item I<find_test_files()>
-
-Overloaded from parent class to treat all .pm files in C<lib/> and
-C<t/lib/> as unit tests if they use L<My::Tests::Below>, to look for
-C<.t> files in C<examples/>, and to retain C<.t> test files in
-C<t/maintainer> if and only if L</maintainer_mode_enabled> is true.
-
-=cut
-
-sub find_test_files {
-    my $self = shift;
-
-    # Short-cut activated by L</ACTION_test>:
-    return $self->{FORCE_find_test_files_result} if
-        (defined $self->{FORCE_find_test_files_result});
-
-    my @tests = @{$self->SUPER::find_test_files(@_)};
-    # Short-cut activated by putting a 'test_files' key in the constructor
-    # arguments:
-    return @tests if $self->{test_files};
-
-    @tests = grep { ! m/^t.maintainer/ } @tests unless
-        ($self->maintainer_mode_enabled());
-
-    File::Find::find
-        ({no_chdir => 1, wanted => sub {
-              push(@tests, $_) if $self->find_test_files_predicate();
-          }}, $self->find_test_files_in_directories);
-
-    return \@tests;
-}
-
-=item I<find_test_files_predicate()>
-
-=item I<find_test_files_in_directories()>
-
-Those two methods are used as callbacks by L</find_test_files>;
-subclasses of I<My::Module::Build> may therefore find it convenient to
-overload them.  I<find_test_files_in_directories> should return a list
-of the directories in which to search for test files.
-I<find_test_files_predicate> gets passed the name of each file found
-in these directories in the same way as a L<File::Find> C<wanted> sub
-would (that is, using $_ and B<not> the argument list); it should
-return a true value iff this file is a test file.
-
-=cut
-
-sub find_test_files_predicate {
-    my ($self) = @_;
-    return 1 if m/My.Tests.Below\.pm$/;
-    return if m/\b[_.]svn\b/; # Subversion metadata
-    return 1 if m/\.t$/;
-    my $module = catfile($self->base_dir, $_);
-    local *MODULE;
-    unless (open(MODULE, "<", $module)) {
-        warn "Cannot open $module: $!";
-        return;
-    }
-    return 1 if grep {
-        m/^require\s+My::Tests::Below\s+unless\s+caller/
-    } (<MODULE>);
-    return;
-}
-
-sub find_test_files_in_directories {
-    grep { -d } ("lib", catdir("t", "lib"), "examples");
-}
-
-=pod
-
-=item I<My::Module::Build::do_create_makefile_pl>
-
-=item I<My::Module::Build::HowAreYouGentlemen::fake_makefile>
-
-Overloaded respectively from L<Module::Build::Base> and
-L<Module::Build::Compat> so that typing
-
-=for My::Tests::Below "great justice" begin
-
-   perl Makefile.PL
-   make your time
-
-=for My::Tests::Below "great justice" end
-
-produces a helpful message in packages that have a Makefile.PL (see
-L<Module::Build/create_makefile_pl> for how to do that). You won't get
-signal if you use a "traditional" style Makefile.PL (but on the other
-hand the rest of I<My::Module::Build> will not work either, so don't
-do that).
-
-This easter egg was a feature of an old GNU-make based build framework
-that I created in a former life.  So there.
-
-=cut
-
-sub do_create_makefile_pl {
-  my ($self, %args) = @_;
-  warn("Cannot take off any Zig, sorry"),
-      return $self->SUPER::do_create_makefile_pl(%args) if ($args{fh});
-  $args{file} ||= 'Makefile.PL';
-  my $retval = $self->SUPER::do_create_makefile_pl(%args);
-  my $MakefilePL = read_file($args{file});
-  $MakefilePL = <<'PREAMBLE' . $MakefilePL;
-use FindBin qw($Bin);
-use lib "$Bin/inc";
-PREAMBLE
-  $MakefilePL =~ s|Module::Build::Compat->write_makefile|My::Module::Build::HowAreYouGentlemen->write_makefile|;
-  write_file($args{file}, $MakefilePL);
-  return $retval;
-}
-
-{
-    package My::Module::Build::HowAreYouGentlemen;
-    our @ISA=qw(Module::Build::Compat); # Do not explicitly load it because
-    # Makefile.PL will set up us the Module::Build::Compat itself (and
-    # also we want to take off every zig of bloat when
-    # My::Module::Build is loaded from elsewhere). Moreover, "use
-    # base" is not yet belong to us at this time.
-
-    sub fake_makefile {
-        my $self = shift;
-        return $self->SUPER::fake_makefile(@_). <<'MAIN_SCREEN_TURN_ON';
-# In 2101 AD war was beginning...
-your:
-	@echo
-	@echo -n "     All your codebase"
-
-time:
-	@echo " are belong to us !"
-	@echo
-
-MAIN_SCREEN_TURN_ON
-    }
-}
-
-=back
-
-=head2 Overloaded Internal Methods
-
-Yeah I know, that's a pretty stupid thing to do, but that's the best I
-could find to get Module::Build to do my bidding.
-
-=over
-
-=item I<_startperl>
-
-Overloaded from parent to attempt a chdir() into the right place in
-./Build during initialization. This is an essential enabler to the
-Emacs debugger support (see L</ACTION_test>) because we simply cannot
-tell where Emacs will be running us from.
-
-=cut
-
-sub _startperl {
-    my $self = shift;
-    my $basedir = $self->base_dir;
-    $basedir = Win32::GetShortPathName($basedir) if is_win32;
-    return $self->SUPER::_startperl(@_) . <<"MORE";
-
-# Hack by My::Module::Build to give the Emacs debugger one
-# more chance to work:
-use Cwd;
-BEGIN {
-  \$My::Module::Build::initial_cwd = \$My::Module::Build::initial_cwd =
-    Cwd::cwd;
-  chdir("$basedir") || 1;
-}
-MORE
-}
-
-=item I<_packages_inside($file)>
-
-Returns a list of Perl packages to be found inside $file. Overloaded
-from the parent class so as to refrain from parsing after the __END__
-marker.
-
-=cut
-
-sub _packages_inside {
-    # Copied 'n modified from the parent class, doubleplusshame on me!
-    my ($self, $file) = @_;
-    my $fh = IO::File->new($file) or die "Can't read $file: $!";
-    my @packages;
-
-    while(my (undef, $p) = $self->_next_code_line
-          ($fh, qr/^(?:__END__$|__DATA__$|[\s\{;]*package\s+([\w:]+))/)) {
-        last if ! defined $p;
-        push @packages, $p;
-    }
-    return @packages;
-}
-
-=back
-
-=head2 Private Methods for the Dependent Option Graph
-
-=over
 
 =item I<MODIFY_CODE_ATTRIBUTES($package, $coderef, @attrs)>
 
@@ -1220,6 +906,517 @@ sub _process_options {
     return @alloptions;
 }
 
+=end internals
+
+=back
+
+=head2 Other Public Methods
+
+Those methods will be called automatically from within the generated
+./Build, but on the other hand one probably shouldn't call them
+directly from C<Build.PL> .  One may wish to overload some of them in
+a package-specific subclass, however.
+
+=over
+
+=item I<ACTION_build>
+
+Overloaded to add L</ACTION_buildXS> as a dependency.
+
+=cut
+
+sub ACTION_build {
+    my $self = shift;
+
+    $self->depends_on("buildXS");
+    $self->SUPER::ACTION_build(@_);
+}
+
+=item I<ACTION_dist>
+
+Overloaded so that typing C<./Build dist> does The Right Thing and
+regenerates everything that is needed in order to create the
+distribution tarball. This includes the C<Makefile.PL> if so requested
+(see L<Module::Build::Compat/create_makefile_pl>) and the C<MANIFEST>
+file (see L<Module::Build/manifest>).  On the other hand, the
+C<META.yml> file is not regenerated automatically, so that the author
+has the option of maintaining it by hand.
+
+=cut
+
+sub ACTION_dist {
+    my $self = shift;
+
+    $self->do_create_makefile_pl if $self->create_makefile_pl;
+    $self->do_create_readme if $self->create_readme;
+    $self->depends_on("manifest");
+
+    $self->SUPER::ACTION_dist(@_);
+}
+
+=item I<ACTION_buildXS>
+
+Does nothing.  Intended for overloading by packages that have XS code,
+which e.g. may want to call L</process_Inline_C_file> there.
+
+=cut
+
+sub ACTION_buildXS { }
+
+=item I<ACTION_test>
+
+Overloaded to add t/lib and t/inc to the test scripts' @INC (we
+sometimes put helper test classes in there), and also to implement the
+features described in L</Extended C<test> action>.  See also
+L</_massage_ARGV> for more bits of the Emacs debugger support code.
+
+=cut
+
+sub ACTION_test {
+    my $self = shift;
+
+    # Tweak @INC (done this way, works regardless of whether we'll be
+    # doing the harnessing ourselves or not)
+    local @INC = (@INC, catdir($self->base_dir, "t", "lib"),
+                  catdir($self->base_dir, "t", "inc"));
+
+    # use_blib feature, part 1:
+    $self->depends_on("buildXS") if $self->use_blib;
+
+    my @files_to_test = map {
+        our $initial_cwd; # Set at BEGIN time, see L<_startperl>
+        File::Spec->rel2abs($_, $initial_cwd)
+    } (@{$self->{args}->{ARGV} || []});
+
+    if ($running_under_emacs_debugger && @files_to_test == 1) {
+        # We want to run this script under a slave_editor debugger, so
+        # as to implement the documented trick. The simplest way
+        # (although inelegant) is to bypass Module::Build and
+        # Test::Harness entirely, and run the child Perl
+        # ourselves. Most of the code below was therefore cobbled
+        # together from the real T::H version 2.40 and M::B 0.26
+        $self->depends_on('code'); # As in original ACTION_test
+
+        # Compute adequate @INC for sub-perl:
+        my @inc = do { my %inc_dupes; grep { !$inc_dupes{$_}++ } @INC };
+        if (is_win32) { s/[\\\/+]$// foreach @inc; }
+        # Add blib/lib and blib/arch like the original ACTION_test does:
+        if ($self->use_blib) {
+            unshift @inc, catdir($self->base_dir(), $self->blib, 'lib'),
+                catdir($self->base_dir(), $self->blib, 'arch');
+        } else {
+            unshift @inc, catdir($self->base_dir(), 'lib');
+        }
+        # Parse shebang line to set taintedness properly:
+        local *TEST;
+        open(TEST, $files_to_test[0]) or die
+            "Can't open $files_to_test[0]. $!\n";
+        my $shebang = <TEST>;
+        close(TEST) or print "Can't close $files_to_test[0]. $!\n";
+        my $taint = ( $shebang =~ /^#!.*\bperl.*\s-\w*([Tt]+)/ );
+        my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
+        system($perl, "-d",
+               ($taint ? ("-T") : ()),
+               (map { ("-I" => $_) } @inc),
+               $files_to_test[0], "-emacs");
+        return;
+    }
+
+    # Localize stuff in order to fool our superclass for fun & profit
+
+    local %ENV = $self->customize_env(%ENV);
+
+    local $self->{FORCE_find_test_files_result}; # See L</find_test_files>
+    $self->{FORCE_find_test_files_result} = \@files_to_test if
+        @files_to_test;
+    # DWIM for ->{verbose} (see POD)
+    local $self->{properties} = { %{$self->{properties}} };
+    if (@files_to_test == 1) {
+        $self->{properties}->{verbose} = 1 if
+            (! defined $self->{properties}->{verbose});
+    }
+
+    # use_blib feature, cont'd:
+    no warnings "once";
+    local *blib = sub {
+        my $self = shift;
+
+        return File::Spec->curdir if ! $self->use_blib;
+        return $self->SUPER::blib(@_);
+    };
+
+
+    $self->SUPER::ACTION_test(@_);
+}
+
+=item I<ACTION_distmeta>
+
+Overloaded to ensure that .pm modules in inc/ don't get indexed and
+that the C<add_to_no_index> parameter to L</new> is honored.
+
+=cut
+
+sub ACTION_distmeta {
+    my $self = shift;
+
+    eval { require YAML } or die ($@ . <<"MESSAGE");
+
+YAML is required for distmeta to produce accurate results. Please
+install it and re-run this command.
+
+MESSAGE
+
+    # Steals a reference to the YAML object that will be constructed
+    # by the parent class (duhh)
+    local our $orig_yaml_node_new = \&YAML::Node::new;
+    local our $node;
+    no warnings "redefine";
+    local *YAML::Node::new = sub {
+        $node = $orig_yaml_node_new->(@_);
+    };
+
+    my $retval = $self->SUPER::ACTION_distmeta;
+    die "Failed to steal the YAML node" unless defined $node;
+
+    $node->{no_index} = $self->{properties}->{add_to_no_index} || {};
+    $node->{no_index}->{directory} ||= [];
+    unshift(@{$node->{no_index}->{directory}}, qw(examples inc t),
+            (map { File::Spec::Unix->catdir("lib", split m/::/) }
+             (@{$node->{no_index}->{namespace} || []})));
+
+    foreach my $package (keys %{$node->{provides}}) {
+        delete $node->{provides}->{$package} if
+            (grep {$package =~ m/^\Q$_\E/}
+             @{$node->{no_index}->{namespace} || []});
+        delete $node->{provides}->{$package} if
+            (grep {$package eq $_}
+             @{$node->{no_index}->{package} || []});
+    }
+
+    my $metafile =
+        $self->can("metafile") ? # True as of Module::Build 0.2805
+            $self->metafile() : $self->{metafile};
+    # YAML API changed after version 0.30
+    my $yaml_sub =
+        ($YAML::VERSION le '0.30' ? \&YAML::StoreFile : \&YAML::DumpFile);
+    $yaml_sub->($metafile, $node)
+        or die "Could not write to $metafile: $!";
+;
+}
+
+=item I<customize_env(%env)>
+
+Returns a copy of %env, an environment hash, modified in a
+package-specific fashion.  To be used typically as
+
+   local %ENV = $self->customize_env(%ENV);
+
+The default implementation sets PERL_INLINE_BUILD_NOISY to 1 and also
+sets FULL_DEBUGGING if so directed by the command line (see L</
+ACTION_test>).
+
+=cut
+
+sub customize_env {
+    my ($self, %env) = @_;
+    delete $env{FULL_DEBUGGING};
+
+    $env{PERL_INLINE_BUILD_NOISY} = 1;
+    $env{FULL_DEBUGGING} = 1 if ($self->{args}->{full_debugging});
+    return %env;
+}
+
+=item I<process_pm_files>
+
+Called internally in Build to convert lib/**.pm files into their
+blib/**.pm counterpart; overloaded here to remove the test suite (see
+L</Unit tests>) and standardize the copyright of the files authored by
+me.
+
+=cut
+
+sub process_pm_files {
+    no warnings "once";
+    local *copy_if_modified = \*process_pm_file_if_modified;
+    my $self = shift;
+    return $self->SUPER::process_pm_files(@_);
+}
+
+=item I<process_pm_file_if_modified(%args)>
+
+Does the same as L<copy_file_if_modified> (which it actually replaces
+while L<process_pm_files> runs), except that the L</new_pm_filter> is
+applied instead of performing a vanilla copy as L<Module::Build> does.
+
+=cut
+
+sub process_pm_file_if_modified {
+    my ($self, %args) = @_;
+    my ($from, $to) = @args{qw(from to)};
+    return if $self->up_to_date($from, $to); # Already fresh
+
+    mkpath(dirname($to), 0, 0777);
+
+    # Do a filtering copy
+    print "$from -> $to\n" if $args{verbose};
+    die "Cannot open $from for reading: $!\n" unless
+        (my $fromfd = new IO::File($from, "r"));
+    die "Cannot open $to for writing: $!\n" unless
+        (my $tofd = new IO::File($to, "w"));
+
+    my $filter = $self->new_pm_filter;
+    while(my $line = <$fromfd>) {
+        my $moretext = $filter->filter($line);
+        if (defined($moretext) && length($moretext)) {
+            $tofd->print($moretext) or
+                die "Cannot write to $to: $!\n";
+        }
+        last if $filter->eof_reached();
+    }
+    $tofd->close() or die "Cannot close to $to: $!\n";
+}
+
+=item I<new_pm_filter>
+
+Creates and returns a fresh filter object (see
+L</My::Module::Build::PmFilter Ancillary Class>) that will be used by
+L</process_pm_file_if_modified> to process the text of the .pm files.
+Subclasses may find it convenient to overload I<new_pm_filter> in
+order to provide a different filter.  The filter object should obey
+the API set forth in L</My::Module::Build::PmFilter Ancillary Class>,
+although it need not inherit from same.
+
+=cut
+
+sub new_pm_filter { My::Module::Build::PmFilter->new }
+
+=item I<find_test_files()>
+
+Overloaded from parent class to treat all .pm files in C<lib/> and
+C<t/lib/> as unit tests if they use L<My::Tests::Below>, to look for
+C<.t> files in C<examples/>, and to retain C<.t> test files in
+C<t/maintainer> if and only if L</maintainer_mode_enabled> is true.
+
+=cut
+
+sub find_test_files {
+    my $self = shift;
+
+    # Short-cut activated by L</ACTION_test>:
+    return $self->{FORCE_find_test_files_result} if
+        (defined $self->{FORCE_find_test_files_result});
+
+    my @tests = @{$self->SUPER::find_test_files(@_)};
+    # Short-cut activated by putting a 'test_files' key in the constructor
+    # arguments:
+    return @tests if $self->{test_files};
+
+    @tests = grep { ! m/^t.maintainer/ } @tests unless
+        ($self->maintainer_mode_enabled());
+
+    File::Find::find
+        ({no_chdir => 1, wanted => sub {
+              push(@tests, $_) if $self->find_test_files_predicate();
+          }}, $self->find_test_files_in_directories);
+
+    return \@tests;
+}
+
+=item I<find_test_files_predicate()>
+
+=item I<find_test_files_in_directories()>
+
+Those two methods are used as callbacks by L</find_test_files>;
+subclasses of I<My::Module::Build> may therefore find it convenient to
+overload them.  I<find_test_files_in_directories> should return a list
+of the directories in which to search for test files.
+I<find_test_files_predicate> gets passed the name of each file found
+in these directories in the same way as a L<File::Find> C<wanted> sub
+would (that is, using $_ and B<not> the argument list); it should
+return a true value iff this file is a test file.
+
+=cut
+
+sub find_test_files_predicate {
+    my ($self) = @_;
+    return 1 if m/My.Tests.Below\.pm$/;
+    return if m/\b[_.]svn\b/; # Subversion metadata
+    return 1 if m/\.t$/;
+    my $module = catfile($self->base_dir, $_);
+    local *MODULE;
+    unless (open(MODULE, "<", $module)) {
+        warn "Cannot open $module: $!";
+        return;
+    }
+    return 1 if grep {
+        m/^require\s+My::Tests::Below\s+unless\s+caller/
+    } (<MODULE>);
+    return;
+}
+
+sub find_test_files_in_directories {
+    grep { -d } ("lib", catdir("t", "lib"), "examples");
+}
+
+=back
+
+=begin internals
+
+=head1 INTERNAL DOCUMENTATION
+
+This section describes how My::Module::Build works internally. It
+should be useful only to people who intend to modify it.
+
+=over
+
+=item I<My::Module::Build::do_create_makefile_pl>
+
+=item I<My::Module::Build::HowAreYouGentlemen::fake_makefile>
+
+Overloaded respectively from L<Module::Build::Base> and
+L<Module::Build::Compat> so that typing
+
+=for My::Tests::Below "great justice" begin
+
+   perl Makefile.PL
+   make your time
+
+=for My::Tests::Below "great justice" end
+
+produces a helpful message in packages that have a Makefile.PL (see
+L<Module::Build/create_makefile_pl> for how to do that). You won't get
+signal if you use a "traditional" style Makefile.PL (but on the other
+hand the rest of I<My::Module::Build> will not work either, so don't
+do that).
+
+This easter egg was a feature of an old GNU-make based build framework
+that I created in a former life.  So there.
+
+=cut
+
+sub do_create_makefile_pl {
+  my ($self, %args) = @_;
+  warn("Cannot take off any Zig, sorry"),
+      return $self->SUPER::do_create_makefile_pl(%args) if ($args{fh});
+  $args{file} ||= 'Makefile.PL';
+  my $retval = $self->SUPER::do_create_makefile_pl(%args);
+  my $MakefilePL = read_file($args{file});
+  $MakefilePL = <<'PREAMBLE' . $MakefilePL;
+use FindBin qw($Bin);
+use lib "$Bin/inc";
+PREAMBLE
+  $MakefilePL =~ s|Module::Build::Compat->write_makefile|My::Module::Build::HowAreYouGentlemen->write_makefile|;
+  write_file($args{file}, $MakefilePL);
+  return $retval;
+}
+
+{
+    package My::Module::Build::HowAreYouGentlemen;
+    our @ISA=qw(Module::Build::Compat); # Do not explicitly load it because
+    # Makefile.PL will set up us the Module::Build::Compat itself (and
+    # also we want to take off every zig of bloat when
+    # My::Module::Build is loaded from elsewhere). Moreover, "use
+    # base" is not yet belong to us at this time.
+
+    sub fake_makefile {
+        my $self = shift;
+        return $self->SUPER::fake_makefile(@_). <<'MAIN_SCREEN_TURN_ON';
+# In 2101 AD war was beginning...
+your:
+	@echo
+	@echo -n "     All your codebase"
+
+time:
+	@echo " are belong to us !"
+	@echo
+
+MAIN_SCREEN_TURN_ON
+    }
+}
+
+=head2 Overloaded Internal Methods
+
+Yeah I know, that's a pretty stupid thing to do, but that's the best I
+could find to get Module::Build to do my bidding.
+
+=over
+
+=item I<subclass(%named_arguments)>
+
+Overloaded from L<Module::Build::Base> to set @ISA at compile time and
+to the correct value in the sub-classes generated from the C<< code >>
+named argument. We need @ISA to be set up at compile-time so that the
+method attributes work correctly; also we work around a bug present in
+Module::Build 0.26 and already fixed in the development branch whence,
+ironically, ->subclass does not work from a subclass.
+
+=cut
+
+sub subclass {
+    my ($pack, %opts) = @_;
+
+    $opts{code} = <<"KLUDGE_ME_UP" if defined $opts{code};
+# Kludge inserted by My::Module::Build to work around some brokenness
+# in the \@ISA setup code above:
+use base "My::Module::Build";
+our \@ISA;
+BEGIN { our \@ISAorig = \@ISA; }
+\@ISA = our \@ISAorig;
+
+$opts{code}
+KLUDGE_ME_UP
+
+    return $pack->SUPER::subclass(%opts);
+}
+
+=item I<_startperl>
+
+Overloaded from parent to attempt a chdir() into the right place in
+./Build during initialization. This is an essential enabler to the
+Emacs debugger support (see L</ACTION_test>) because we simply cannot
+tell where Emacs will be running us from.
+
+=cut
+
+sub _startperl {
+    my $self = shift;
+    my $basedir = $self->base_dir;
+    $basedir = Win32::GetShortPathName($basedir) if is_win32;
+    return $self->SUPER::_startperl(@_) . <<"MORE";
+
+# Hack by My::Module::Build to give the Emacs debugger one
+# more chance to work:
+use Cwd;
+BEGIN {
+  \$My::Module::Build::initial_cwd = \$My::Module::Build::initial_cwd =
+    Cwd::cwd;
+  chdir("$basedir") || 1;
+}
+MORE
+}
+
+=item I<_packages_inside($file)>
+
+Returns a list of Perl packages to be found inside $file. Overloaded
+from the parent class so as to refrain from parsing after the __END__
+marker.
+
+=cut
+
+sub _packages_inside {
+    # Copied 'n modified from the parent class, doubleplusshame on me!
+    my ($self, $file) = @_;
+    my $fh = IO::File->new($file) or die "Can't read $file: $!";
+    my @packages;
+
+    while(my (undef, $p) = $self->_next_code_line
+          ($fh, qr/^(?:__END__$|__DATA__$|[\s\{;]*package\s+([\w:]+))/)) {
+        last if ! defined $p;
+        push @packages, $p;
+    }
+    return @packages;
+}
+
 =back
 
 =head2 Other Private Methods
@@ -1241,17 +1438,18 @@ sub _massage_ARGV {
     my ($argvref) = @_;
     my @argv = @$argvref;
 
-	if ($ENV{EMACS} && (grep {$_ eq "-emacs"} @argv) &&
-		$argv[0] eq "-d") {
-        $running_under_emacs_debugger = 1;
+    return unless ($ENV{EMACS} && (grep {$_ eq "-emacs"} @argv));
 
-        shift @argv; # Off with -d
-        # XEmacs foolishly assumes that the second word in the perldb
-		# line is a filename and turns it into e.g. "/my/path/test":
-        my (undef, undef, $build_command) =
-            File::Spec->splitpath(shift @argv);
-        @$argvref = ($build_command, grep {$_ ne "-emacs"} @argv);
-	}
+    $running_under_emacs_debugger = 1;
+
+    @argv = grep { $_ ne "-emacs" } @argv;
+    shift @argv if $argv[0] eq "-d"; # Was gratuitously added by former Emacsen
+
+    # XEmacs foolishly assumes that the second word in the perldb
+    # line is a filename and turns it into e.g. "/my/path/test":
+     (undef, undef, $argv[0]) = File::Spec->splitpath($argv[0]);
+
+    @$argvref = @argv;
 }
 
 =back
@@ -1357,7 +1555,7 @@ The zero-wing easter egg only works through the Makefile.PL
 compatibility mode. On the other hand, "./Build your time" would not
 sound quite right, would it?
 
-Perhaps the L</Dependent option graph> features should be repackaged
+Perhaps the L</Dependent Option Graph> features should be repackaged
 as a standalone Module::Build plug-in.
 
 =head1 SEE ALSO
@@ -1426,9 +1624,11 @@ HEADER
     package main_screen; # Do not to pollute the namespace of "main" with
     # the "use" directives below - Still keeping refactoring in mind.
 
+    BEGIN { *write_file = \&My::Module::Build::write_file;
+            *read_file  = \&My::Module::Build::read_file; }
+
     use Test::More;
-    use File::Slurp qw(read_file write_file);
-    use Fatal qw(mkdir chdir read_file write_file);
+    use Fatal qw(mkdir chdir);
 
     local @ARGV = qw(--noinstall-everything);
 
@@ -1462,15 +1662,16 @@ HEADER
 
 ####################### Main test suite ###########################
 
-use File::Slurp qw(read_file write_file);
 use File::Copy qw(copy);
 use File::Spec::Functions qw(catfile catdir);
 use IO::Pipe;
-# Probably wise to add this in real test suites too:
-use Fatal qw(mkdir chdir read_file write_file copy);
+BEGIN { *write_file = \&My::Module::Build::write_file;
+        *read_file  = \&My::Module::Build::read_file; }
 
-my $fakemoduledir =  My::Tests::Below->tempdir() . "/Fake-Module";
-mkdir($fakemoduledir);
+# Probably wise to add this in real test suites too:
+use Fatal qw(mkdir chdir copy);
+
+mkdir(my $fakemoduledir = My::Tests::Below->tempdir() . "/Fake-Module");
 
 my $sample_Build_PL = My::Tests::Below->pod_code_snippet("synopsis");
 
@@ -1576,11 +1777,17 @@ SKIP: {
     skip "Not testing Build distmeta (YAML not available)", 2
         unless eval { require YAML };
 
-    write_file("$fakemoduledir/test.sh",
-               "cd $fakemoduledir\n",
-               My::Tests::Below->pod_data_snippet("distmeta"));
-    system("/bin/sh", "-x", "$fakemoduledir/test.sh");
-    is($?, 0, "creating META.yml using documented procedure");
+    my $snippet = My::Tests::Below->pod_data_snippet("distmeta");
+    my $errfile = "$fakemoduledir/meta-yml-error.log";
+    my $script = <<"SCRIPT";
+exec > "$errfile" 2>&1
+set -x
+cd "$fakemoduledir"
+$snippet
+SCRIPT
+    system($script);
+    is($?, 0, "creating META.yml using documented procedure")
+        or diag($script . read_file($errfile));
     my $META_yml = read_file("$fakemoduledir/META.yml");
     my $excerpt = My::Tests::Below->pod_data_snippet("META.yml excerpt");
     $excerpt =~ s/\n+/\n/gs; $excerpt =~ s/^\n//s;
