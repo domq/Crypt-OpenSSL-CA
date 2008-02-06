@@ -45,6 +45,10 @@ the RA, but the CA can and should be fully automatic.)
 
 =back
 
+=head2 CCITT
+
+French name for L</ITU-T>
+
 =head2 CN
 
 See L</DN>
@@ -128,6 +132,11 @@ sizes, ranging from the ubiquitous smartcard or USB dongle to
 FIPS-certified, high-performance, redundant, multiple security domain,
 and usually outrageously expensive SCSI or PCI hardware.
 
+=head2 ITU-T
+
+Also known as CCITT, a standards body that deals with
+telcos. L<http://en.wikipedia.org/wiki/ITU-T>
+
 =head2 L
 
 See L</DN>
@@ -150,7 +159,7 @@ non-unique human name.  For example 2.5.4.8 is C<stateOrProvinceName>,
 a L</DN> attribute key; 1.2.840.113549.1.1.5 is
 C<sha1WithRSAEncryption>, a cryptographic algorithm specification used
 in L</X509> certificates as part of the L</CA>'s signature; and
-1.3.6.1.2.1.10.132.2 is potCapacity, a variable susceptible of being
+1.3.6.1.2.1.10.132.2 is C<potCapacity>, a variable susceptible of being
 probed over SNMP indicating "the number of units of beverage supported
 by this device (regardless of its current state)" (no kidding).  You
 can even roll your own (for a modest fee)!
@@ -167,7 +176,7 @@ See L</DN>
 Privacy-enhanced Electronic Mail, an early attempt at deploying
 public-key cryptography over the Internet
 (http://en.wikipedia.org/wiki/Privacy-enhanced_Electronic_Mail).  The
-file format of PEM, which consists of putting base64-encoded <L/DER>
+file format of PEM, which consists of putting base64-encoded L</DER>
 data between type markers such as C<-----BEGIN CERTIFICATE-----> and
 C<-----END CERTIFICATE----->, is still used by L</PKIX> extensively.
 
@@ -181,18 +190,16 @@ series that is confusing at first is that not all of them deal with
 public-key cryptography proper - e.g. PKCS#11 is an API for smart
 cards.
 
-=head1 PKCS#10
+=head2 PKCS#10
 
-The most widely used format of L</CSR>.  In addition to the usual
-fields (public key, signature, and proof-of-possession challenge), a
-PKCS#10 request contains X509-like fields such as a would-be subject
-L</DN>, certificate request flags, in addition to the basic
-ingredients of a proof-of-possession message (public key, challenge
-and signature).
+The most widely used format of L</CSR>.  In addition to the
+cryptographic fields (public key, signature, and proof-of-possession
+challenge), a PKCS#10 request contains X509-like fields such as a
+would-be subject L</DN>, certificate request flags, etc.
 
 =head2 PKI
 
-Public Key Infrastructure, a typically massive set of standards,
+Public Key Infrastructure, a typically massive assortment of standards,
 software and hardware to put public key cryptosystem such as L</RSA>
 to actual use in a computer system. L</PKIX> and PGP are the two best
 known kinds of PKI; despite their relying on the same cryptographic
@@ -235,7 +242,7 @@ L<http://en.wikipedia.org/wiki/RSA>
 The standard for embedding cryptographic payloads from L</PKIX> inside
 Internet e-mail, thereby providing security services such as
 authentication and confidentiality.  This can be thought of as the
-equivalent of PGP's "ASCII armor" features.
+equivalent of PGP's "ASCII armor" feature.
 
 L<http://en.wikipedia.org/wiki/S/MIME>
 
@@ -250,16 +257,16 @@ See L</DN>
 
 =head2 X.*
 
-The set of all telecom standards put forth by the ITU-T (also known as
-CCITT) that pertain to ``data network and open system communication''
-(L<http://en.wikipedia.org/wiki/ITU-T>).  Standards starting at X400
-describe an electronic mail system (that existed long before the
-Internet's SMTP); X500 is a directory service (on which LDAP is
-heavily inspired).  Unlike the fully open Internet L</RFC>s, X.*
-standards are known (and loathed) for the complexity of their adoption
-process, the ensuing difficulty of accessing them in full including
-the various addenda and errata, and (historically) the expensive fees
-involved in doing so.
+The set of all telecom standards put forth by the L</ITU-T> that
+pertain to ``data network and open system communication'' (see
+L<http://en.wikipedia.org/wiki/ITU-T>).  Standards of the X.* series
+are identified with numbers: the X400 series describes an electronic
+mail system (that existed long before the Internet's SMTP); X500 is a
+directory service (of which LDAP is heavily inspired).  Unlike the
+fully open Internet L</RFC>s, X.* standards are known (and loathed)
+for the complexity of their adoption process, the ensuing difficulty
+of accessing them in full including the various addenda and errata,
+and (historically) the expensive fees involved in doing so.
 
 =head2 X509
 
@@ -272,6 +279,6 @@ documentary quality.
 
 =head2 X690
 
-See L</DER>.
+Another name for L</DER>.
 
 =cut

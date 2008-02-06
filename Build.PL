@@ -39,6 +39,7 @@ my $builder = $class->new
         "File::Path"            => 0,
         "File::Spec"            => 0,
         "File::Spec::Functions" => 0,
+	"File::Slurp"		=> 0,
         "Devel::Leak"           => 0,
         "Proc::ProcessTable"    => 0,
         "Net::SSLeay"           => 1.25, # For access to ERR_ in tests
@@ -64,7 +65,7 @@ use My::Module::Build;
 
 =head1 CUSTOM BUILD OPTIONS
 
-=item I<< --openssl-includedir=<path> >>
+=item I<< --openssl-cflags=<path> >>
 
 Provides the path where the OpenSSL header files are to be found.
 Default is to query C<pkg-config>, or failing that, to use the
@@ -72,11 +73,11 @@ compiler-provided system defaults.
 
 =cut
 
-sub openssl_includedir : Config_Option(type="string") {
-    (default => (`pkg-config --cflags-only-I openssl 2>/dev/null`));
+sub openssl_cflags : Config_Option(type="string") {
+    (default => (`pkg-config --cflags openssl 2>/dev/null`));
 }
 
-=item I<< --openssl-libdir=<path> >>
+=item I<< --openssl-ldflags=<path> >>
 
 Provides the path where the OpenSSL libraries are to be found.
 Default is to query C<pkg-config>, or failing that, to use the
@@ -84,8 +85,8 @@ compiler-provided system defaults.
 
 =cut
 
-sub openssl_libdir : Config_Option(type="string") {
-    (default => (`pkg-config --libs-only-L openssl 2>/dev/null`));
+sub openssl_ldflags : Config_Option(type="string") {
+    (default => (`pkg-config --libs openssl 2>/dev/null`));
 }
 
 =head1 CUSTOM COMMAND-LINE SWITCHES
@@ -95,9 +96,9 @@ sub openssl_libdir : Config_Option(type="string") {
 =item I<full_debugging=1>
 
 Enables L<Crypt::OpenSSL::CA::Inline::C/full_debugging> while running
-C<./Build test>.  This is only intended for situations where setting
-an environment variable is inconvenient (e.g. the Perl debugger).
-Implies C<use_blib=0> (see L<My::Module::Build>).
+C<./Build test>.  Setting the FULL_DEBUGGING environment variable to 1
+has the same effect, however the latter is not possible eg from the
+Perl debugger.  Implies C<use_blib=0> (see L<My::Module::Build>).
 
 =cut
 
@@ -206,7 +207,8 @@ Returns the directory in which C<Build.PL> resides.
 =cut
 
 sub topdir {
-    # FIXME: probably not good enough in some cases.
+    # May not be good enough in some cases, but as long as the tests
+    # do pass...
     require FindBin;
     return $FindBin::Bin;
 }
@@ -232,7 +234,7 @@ being recompiled.
 
 sub _customize_env {
     my ($self, %env) = @_;
-    foreach my $item (qw(openssl_libdir openssl_includedir)) {
+    foreach my $item (qw(openssl_ldflags openssl_cflags)) {
         my $varname = "BUILD_" . uc($item);
         delete $env{$varname};
         $env{$varname} = $self->option_value("$item")

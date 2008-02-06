@@ -1,8 +1,7 @@
 Build.PL
 Changes
-examples/crlv2.t
-examples/delta-crl.t
-examples/make-x509-cert.t
+examples/make-cert-chain.pl
+examples/make-crls.pl
 inc/My/Module/Build.pm
 inc/My/Tests/Below.pm
 lib/Crypt/OpenSSL/CA.pm
@@ -14,9 +13,14 @@ MANIFEST			This list of files
 META.yml
 README
 t/10-unknown-method.t
+t/example-make-cert-chain.t
+t/example-make-crls.t
+t/inc/File/Which.pm
 t/lib/Crypt/OpenSSL/CA/Test.pm
 t/maintainer/dependencies.t
+t/maintainer/kwalitee.t
 t/maintainer/nobreakpoints.t
+t/maintainer/nodebugwords.t
 t/maintainer/pod-coverage.t
 t/maintainer/pod-source.t
 t/maintainer/pod.t

@@ -59,8 +59,6 @@ All functions described in this section factor some useful test
 tactics and are exported by default.  The L</SAMPLE INPUTS> may also
 be exported upon request.
 
-=over
-
 =cut
 
 use Test::Builder;
@@ -75,8 +73,9 @@ use base 'Exporter';
 BEGIN {
     our @EXPORT =
         qw(fork_and_do
-           openssl_path run_thru_openssl run_dumpasn1
-           run_perl run_perl_ok
+           openssl_path run_thru_openssl
+           dumpasn1_available run_dumpasn1
+           run_perl run_perl_ok run_perl_script run_perl_script_ok
            errstack_empty_ok
            certificate_looks_ok
            certificate_chain_ok certificate_chain_invalid_ok
@@ -96,7 +95,7 @@ BEGIN {
     our %EXPORT_TAGS = ("default" => \@EXPORT);
 }
 
-=item I<fork_and_do($sub)>
+=head2 fork_and_do ($sub)
 
 Runs $sub in a forked process, and returns the PID it runs under.  The
 child process calls $sub in void context, and terminates when $sub
@@ -123,7 +122,7 @@ sub fork_and_do (&) {
     warn $@; exit(1);
 }
 
-=item I<openssl_path>
+=head2 openssl_path
 
 Returns the path to the C<openssl> command-line tool, if it is known,
 or undef.  Useful for skipping tests that depend on
@@ -138,7 +137,7 @@ sub openssl_path {
     return $openssl_bin;
 }
 
-=item I<run_thru_openssl($stdin_text, $arg1, $arg2, ...)>
+=head2 run_thru_openssl ($stdin_text, $arg1, $arg2, ...)
 
 Runs the command C<openssl $arg1 $arg2 ...>, feeding it $stdin_text on
 its standard input.  In list context, returns a ($stdout_text,
@@ -173,10 +172,20 @@ sub run_thru_openssl {
     }
 }
 
-=item I<run_dumpasn1($der)>
+=head2 dumpasn1_available ()>
+
+Returns true iff the I<dumpasn1> command can be found in $ENV{PATH}.
+
+=cut
+
+use File::Which ();
+sub dumpasn1_available { not(not File::Which::which("dumpasn1")) }
+
+=head2 run_dumpasn1 ($der)
 
 Runs the I<dumpasn1> command (found in $ENV{PATH}) on $der and returns
 its output.  Throws an exception if dumpasn1 fails for some reason.
+See also L</dumpasn1_available>.
 
 =cut
 
@@ -189,17 +198,17 @@ sub run_dumpasn1 {
  }
 
 
-=item I<run_perl($scripttext)>
+=head2 run_perl ($scripttext)
 
 Runs $scripttext in a sub-Perl interpreter, returning the text of its
 combined stdout and stderr as a single string.  $? is set to the exit
 value of same.
 
-=item I<run_perl_ok($scripttext)>
+=head2 run_perl_ok ($scripttext)
 
-=item I<run_perl_ok($scripttext, \$stdout)>
+=head2 run_perl_ok ($scripttext, \$stdout)
 
-=item I<run_perl_ok($scripttext, \$stdout, $testname)>
+=head2 run_perl_ok ($scripttext, \$stdout, $testname)
 
 Like L</run_perl> but simultaneously asserts (using L<Test::More>)
 that the exit value is successful.  The return value of the sub is the
@@ -210,10 +219,17 @@ second argument, if any.  Additionally the aforementioned output is
 passed to L<Test::More/diag> if the script does exit with nonzero
 status.
 
+=head2 run_perl_script ($scriptname)
+
+=head2 run_perl_script_ok ($scriptname, \$stdout, $testname)
+
+Like L</run_perl> resp L</run_perl_ok> except that the script is
+specified as a file name instead of Perl text.
+
 =cut
 
 sub run_perl {
-    my ($scripttext, $outref, $testname) = @_;
+    my ($scripttext) = @_;
 
     Carp::croak "Bizarre first argument passed to run_perl()"
         if (! defined($scripttext) || ref($scripttext));
@@ -231,30 +247,45 @@ to ease debugging.
 FOR_CONVENIENCE
     }
 
-    my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
-    my @perlcmdline = ($perl, (map { -I => $_ }
-                               (grep {! m|/usr|} @INC)),  # Shame, shame.
-                      );
-
-    diag(join(" ", @perlcmdline)) if $ENV{DEBUG};
-
-    my $stdout;
-    IPC::Run::run(\@perlcmdline, \$scripttext, \$stdout, \$stdout);
-    return $stdout;
+    my ($stdout, $stderr);
+    IPC::Run::run([_perl_cmdline()], \$scripttext, \$stdout, \$stderr);
+    return $stdout . $stderr;
 }
 
-sub run_perl_ok {
+sub run_perl_script {
+  my ($scriptfile) = @_;
+
+  my ($stdout, $stderr);
+  IPC::Run::run([_perl_cmdline(), $scriptfile], \"", \$stdout, \$stderr);
+  return $stdout . $stderr;
+}
+
+BEGIN { foreach my $functionname (qw(run_perl run_perl_script)) {
+  my $ok_wrapper = sub {
     my ($code, $outref, $testname) = @_;
     local $Test::Builder::Level = $Test::Builder::Level + 1;
-    $testname ||= "run_perl_ok";
-    my $out = run_perl($code);
+    $testname ||= $functionname;
+    my $out = __PACKAGE__->can($functionname)->($code);
     $$outref = $out if ref($outref) eq "SCALAR";
     my $retval = is($?, 0, $testname);
     diag($out) if ! $retval;
     return $retval;
+  };
+  no strict "refs";
+  *{"${functionname}_ok"} = $ok_wrapper;
+}}
+
+sub _perl_cmdline {
+  my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
+  my @perlcmdline = ($perl, (map { -I => $_ }
+                             (grep {! m|/usr|} @INC)),  # Shame, shame.
+                    );
+
+  diag(join(" ", @perlcmdline)) if $ENV{DEBUG};
+  return @perlcmdline;
 }
 
-=item I<errstack_empty_ok()>
+=head2 errstack_empty_ok ()
 
 Asserts that OpenSSL's error stack is empty, and clears it if not.  To
 be run at the end of every test.
@@ -275,11 +306,11 @@ sub errstack_empty_ok {
     return is($errcount, 0, "number of errors found on OpenSSL's stack");
 }
 
-=item I<cannot_check_SV_leaks()>
+=head2 cannot_check_SV_leaks ()
 
 Returns true iff L<Devel::Leak> is unavailable.
 
-=item I<cannot_check_bytes_leaks()>
+=head2 cannot_check_bytes_leaks ()
 
 Returns true iff L<Proc::ProcessTable> is unavailable.
 
@@ -289,7 +320,7 @@ sub cannot_check_SV_leaks { ! eval { require Devel::Leak } }
 
 sub cannot_check_bytes_leaks { ! eval { require Proc::ProcessTable } }
 
-=item I<leaks_SVs_ok($coderef, %named_arguments)>
+=head2 leaks_SVs_ok ($coderef, %named_arguments)
 
 Executes $coderef and asserts (with L<Test::More>) that it doesn't
 leak Perl SVs (checked using L<Devel::Leak>).  As a tester, you should
@@ -325,9 +356,9 @@ sub leaks_SVs_ok (&@) {
 }
 
 
-=item I<leaks_bytes_ok($coderef)>
+=head2 leaks_bytes_ok ($coderef)
 
-=item I<leaks_bytes_ok($coderef, $testname)>
+=head2 leaks_bytes_ok ($coderef, $testname)
 
 Executes $coderef and asserts (with L<Test::More>) that it doesn't
 leak memory (checked using L<Proc::ProcessTable>).  As a tester, you
@@ -354,8 +385,6 @@ L<Proc::ProcessTable> needs to allocate some memory of its own.
 
 sub leaks_bytes_ok (&@) {
     my ($coderef, %args) = @_;
-    local $Test::Builder::Level = $Test::Builder::Level + 1;
-
     require Proc::ProcessTable;
     require POSIX;
 
@@ -378,7 +407,7 @@ sub leaks_bytes_ok (&@) {
     my $pid = fork_and_do {
         $coderef->();
         File::Slurp::write_file($semfile, "");
-        sleep(1) while -f $semfile;
+        sleep(0.2) while -f $semfile;
         exit(0);
     };
     until (-f $semfile) {
@@ -392,13 +421,14 @@ sub leaks_bytes_ok (&@) {
     waitpid($pid, 0);
 
     my $consumption = $size_after - $size_before;
+    local $Test::Builder::Level = $Test::Builder::Level + 1;
     cmp_ok($consumption, "<", ($args{-max} || 51200),
           $args{-name} || "leaks_bytes_ok");
 }
 
-=item I<certificate_looks_ok($pem_certificate)>
+=head2 certificate_looks_ok ($pem_certificate)
 
-=item I<certificate_looks_ok($pem_certificate, $test_name)>
+=head2 certificate_looks_ok ($pem_certificate, $test_name)
 
 Checks that a certificate passed as a PEM string looks OK to OpenSSL,
 meaning that the signature validates OK and OpenSSL is able to parse
@@ -425,9 +455,9 @@ sub certificate_looks_ok {
     };
 }
 
-=item I<certificate_chain_ok($pem_certificate, \@certchain )>
+=head2 certificate_chain_ok ($pem_certificate, \@certchain )
 
-=item I<certificate_chain_ok($pem_certificate, \@certchain , $test_name)>
+=head2 certificate_chain_ok ($pem_certificate, \@certchain , $test_name)
 
 Checks that a certificate passed as a PEM string is validly signed by
 the certificate chain @certchain, which is a list of PEM strings
@@ -456,8 +486,8 @@ sub _run_openssl_verify {
     my @certchain = grep {
         my $out = run_thru_openssl($_, qw(x509 -noout -text));
         ( $out =~ m/CA:TRUE/ ) ? 1 : (warn(<<"WARNING"), 0);
-$testname: ignoring a non-CA certificate that was passed as
-part of the chain.
+${$testname ? \"$testname: " : \""}Ignoring a non-CA certificate that was
+passed as part of the chain.
 WARNING
     } @$certchain;
     fail("no remaining certificates in chain"), return undef
@@ -472,7 +502,7 @@ WARNING
                                    -CAfile => $bundlefile);
 }
 
-=item I<certificate_chain_invalid_ok($pem_certificate, \@certchain )>
+=head2 certificate_chain_invalid_ok ($pem_certificate, \@certchain )
 
 The converse of L</certificate_chain_ok>; checks that
 I<$pem_certificate> is B<not> validly signed by @certchain.  Note,
@@ -492,7 +522,7 @@ sub certificate_chain_invalid_ok {
     });
 }
 
-=item I<x509_schema()>
+=head2 x509_schema ()
 
 Returns the ASN.1 schema for the whole X509 specification, as a string
 that L<Convert::ASN1> will grok.
@@ -807,7 +837,7 @@ KeyPurposeId ::= OBJECT IDENTIFIER
 
 SCHEMA
 
-=item I<x509_decoder($name)>
+=head2 x509_decoder ($name)
 
 Returns the same as L<Convert::ASN1/find> would when called upon an
 object that would previously have L</x509_schema> fed to him.  The
@@ -832,8 +862,6 @@ sub x509_decoder {
     return $retval;
 }
 
-=back
-
 =head1 SAMPLE INPUTS
 
 I<Crypt::OpenSSL::CA::Test> also provides a couple of constants and
@@ -842,11 +870,9 @@ exportable, but not exported by default (see L</SYNOPSIS>) and they
 start with I<test_>, so as to be clearly identified as sample data in
 the test code.
 
-=over
+=head2 test_simple_utf8 ()
 
-=item I<test_simple_utf8()>
-
-=item I<test_bmp_utf8()>
+=head2 test_bmp_utf8 ()
 
 Two constant functions that return test strings for testing the UTF-8
 capabilities of I<Crypt::OpenSSL::CA>.  Both strings are encoded
@@ -869,7 +895,7 @@ sub test_bmp_utf8 {
     return $retval;
 }
 
-=item I<%test_der_DNs>
+=head2 %test_der_DNs
 
 Contains a set of DER-encoded DNs. The keys are the DNs in
 L<Crypt::OpenSSL::CA::Resources/RFC4514> notation, and the values are
@@ -891,7 +917,7 @@ MB0xCzAJBgNVBAYTAmZyMQ4wDAYDVQQDEwVab2lueA==
 DER
 );
 
-=item I<@test_DN_CAs>
+=head2 @test_DN_CAs
 
 The DN used in all CA and self-signed certificates, namely
 L</%test_self_signed_certs>, L</%test_rootca_certs> and friends. Set
@@ -903,7 +929,7 @@ L<Crypt::OpenSSL::CA/Crypt::OpenSSL::CA::X509_NAME>.
 our @test_DN_CAs = (C => "AU", ST => "Some-State",
                     O => "Internet Widgits Pty Ltd");
 
-=item I<%test_reqs_SPKAC>
+=head2 %test_reqs_SPKAC
 
 Certificate signing requests (CSRs) in Netscape
 L<Crypt::OpenSSL::CA::AlphabetSoup/SPKAC> format, as if generated by
@@ -919,7 +945,7 @@ our %test_reqs_SPKAC =
      rsa2048 => "MIICRjCCAS4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCxupRLykaWvgQP2aZmcEGq9/3OXtnQ1H0tnNfbJexzYYyCOiU1CP8KsMoeNMvdUun4FwGKeckjGF1eDuOgbGh0naG4+M4/5PTCbOaF2otb8zPc+oUGh3tmgiLhLnlV4zQbeTBRD6/giHnFgUWC+Ec/PjEnmDu917430GI2nnD66/OZr9NnyxFYMhSlufwWRGCtR6LLa9QqDAl+DvbSmvHGL9G7VFBGcFwLbaTYUWmkvQwEhq01yZ/bp+yAIJpygsnWMg6kJahkBI5hNFK1KWbLYyF9IDJb6TsL9mRiW8+0BAkZosD5jdm4Ra7SMtiTjzY+FyNp2IRwZ32N70iNGGPZAgMBAAEWBnNlY3JldDANBgkqhkiG9w0BAQQFAAOCAQEAd3JfT2QEo8pBHhQFlh9PDfc3OhL7z0IcebcDL7kslxB5JViuzKMce/+68RoQ9eaepmVunXxVIJEauNp5LrZatxODp8kOsJI86HD1ChMVqrr6DZi6ulBEXst2kvzkEwVN24Hm5t80hGK8jnZtN86iIXk4iA7iEiniTO7qVhq3kEIouV6fprOk2P8bZ24OlVQ0+1Lp4h5EKajRQZoacnK4IGUTNXEGdAI17ID/qf8sqKZQtiqrRXGAQqbx3bxk8aLUm8OhmyeGett75H0n956MNPJiwDy9ftcUnyiuHHYGKq6SZNNs4mKOjnSnz3D9DhUCbJkfG2FbCkRsMl8SHARoyA==",
     );
 
-=item I<%test_reqs_PKCS10>
+=head2 %test_reqs_PKCS10
 
 Certificate signing requests (CSRs) in standard PKCS#10 PEM format, as
 if generated by
@@ -964,7 +990,7 @@ nkGRAm6ZG4kpRFoqrhbNmCaKyCJXhBu91eJfjEGZ
 RSA2048
     );
 
-=item I<%test_keys_plaintext>
+=head2 %test_keys_plaintext
 
 An array of test private keys in PEM format.  The values of this hash
 tables are strings in PEM format (that is, Base64-encoded DER with
@@ -1039,7 +1065,7 @@ nXoWRFxNE9jOECDZUFdIwz4tdjKHG3bIXYX3qzDGhbfwxze3G/5g0lEWUabBjtjY
 RSA2048
 );
 
-=item I<%test_keys_password>
+=head2 %test_keys_password
 
 The same private keys as in L</%test_keys_plaintext>, but
 protected with C<secret> as the password.  Keys are the same as in
@@ -1105,7 +1131,7 @@ vX/Kwjl44H6jnO0zjXutBg/5+3lDxuMxZzcVfCOqF4KENA3vBynJCA==
 RSA2048
 );
 
-=item I<%test_public_keys>
+=head2 %test_public_keys
 
 Public keys obtained from the L</%test_keys_plaintext>
 using the following C<openssl> command:
@@ -1137,7 +1163,7 @@ RSA2048
 );
 
 
-=item I<%test_self_signed_certs>
+=head2 %test_self_signed_certs
 
 Self-signed certificates obtained from the L</%test_keys_plaintext> as
 if using the following C<openssl> command:
@@ -1197,7 +1223,7 @@ KjI6FX0+FXEYyhmsnkAq83kVYop/ietw/mvJkF1xxpkv/urU2AagNVmaxuo=
 RSA2048
 );
 
-=item I<%test_rootca_certs>
+=head2 %test_rootca_certs
 
 Self-signed certificates just like L</%test_self_signed_certs>, except
 that these certificates are signed using C<-extensions v3_ca> in lieu
@@ -1256,7 +1282,7 @@ tKVO4zFWPkXPhdh7brNIn19ayoyESq59WuZhPwZkzOZgaFrHeQA2Dks=
 RSA2048
 );
 
-=item I<%test_entity_certs>
+=head2 %test_entity_certs
 
 Certificates generated using C<openssl ca> from
 L</%test_rootca_certs>, L</%test_keys_plaintext> and the default
@@ -1345,13 +1371,9 @@ valACunSZw==
 RSA2048
      );
 
-=back
-
 =head1 INTERNAL METHODS
 
-=over
-
-=item I<_tempdir>
+=head2 _tempdir
 
 Returns a temporary directory e.g. for storing the C<ca-bundle.crt>
 for L</certificate_chain_ok>.
@@ -1370,7 +1392,7 @@ for L</certificate_chain_ok>.
     }
 }
 
-=item I<_unique_number>
+=head2 _unique_number
 
 As the name implies.  Typically used to create unique filenames in
 L</_tempdir>.
@@ -1379,8 +1401,6 @@ L</_tempdir>.
 
 { my $unique = 0; sub _unique_number { $unique++ } }
 
-
-=back
 
 =head1 TODO
 
@@ -1402,7 +1422,7 @@ use Test::More no_plan => 1;
 use Test::Group;
 use Crypt::OpenSSL::CA::Test;
 
-=head2 Fixture tests
+=head2 Fixture Tests
 
 =head3 Running commands
 

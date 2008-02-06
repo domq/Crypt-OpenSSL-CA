@@ -45,8 +45,8 @@ since I helped write it!). L<http://idx-pki.idealx.org/index.en.html>
 
 The venerable, feature-rich but quirky and poorly documented
 cryptographic library that I<Crypt::OpenSSL::CA> is built
-upon. Available on L<http://www.openssl.org/> (also accessible through
-HTTP/S, of course).
+upon. Available on L<http://www.openssl.org/> (and also on
+L<https://www.openssl.org/>, of course).
 
 =head3 /usr/bin/openssl
 
@@ -61,7 +61,7 @@ Here are a few tricks that I know by heart from typing them so often:
 
 =over
 
-=item Parsing a certificate and displaying the details:
+=item B<Parsing a certificate and displaying the details>
 
   openssl x509 -noout -text -in cert.pem
 
@@ -69,8 +69,8 @@ or at an even lower level, using L</dumpasn1>:
 
   openssl x509 -outform der -in cert.pem | dumpasn1 -
 
-=item Getting the modulus (unique public key identifier) of a
-certificate or private key:
+=item B<Getting the modulus (unique public key identifier) of a
+certificate or private key>
 
 If both match, then the private key and certificate correspond to each
 other.
@@ -78,19 +78,18 @@ other.
   openssl x509 -noout -modulus -in cert.pem
   openssl rsa -noout -modulus -in key.pem
 
-=item Generating a self-signed certificate and matching private key
-for tests:
+=item B<Generating a self-signed certificate and matching private key
+for tests>
 
   openssl req -x509 -nodes -new -newkey 1024 -keyout key.pem -out cert.pem
 
 The resulting C<key.pem> and C<cert.pem> files can be used directly
 for a network server, or to build a toy CA.
 
-=item Building a toy CA:
+=item B<Building a toy CA>
 
-Under distros that sport a cooperative C</usr/lib/ssl/openssl.cnf> or
-C</usr/share/openssl/openssl.cnf>: this was tested on Ubuntu Edgy,
-your mileage may vary.
+Under distros that sport a cooperative C<openssl.cnf>: this was tested
+on Ubuntu Edgy, your mileage may vary.
 
 =over
 
@@ -150,10 +149,10 @@ Any serious work towards contributing to L<Crypt::OpenSSL::CA>
 requires promiscuity with OpenSSL's code base.  I suggest reading and
 understanding C<demos/mkcert.c> and C<apps/ca.c> first, comparing and
 contrasting with the XS code in I<Crypt::OpenSSL::CA> which does
-roughly the same thing in a more modular although less
-feature-complete way.  Seasoned programmers will find the OpenSSL man
-pages of some limited help, and the command C<grep -r some_identifier
-/usr/include/openssl> to come in handy more often than not.
+roughly the same thing in a simpler and more modular way.  Seasoned
+programmers will find the OpenSSL man pages of some limited help, and
+the command C<grep -r some_identifier /usr/include/openssl> to come in
+handy more often than not.
 
 =head3 C<openssl.txt>
 
@@ -182,8 +181,9 @@ reading from.
 =head2 oid.elibel.tm.fr
 
 L<http://www.alvestrand.no/objectid/> and L<http://oid.elibel.tm.fr/>
-are both databases of L</OID>s that together contain pretty much all
-OIDs known to mankind.  The latter sports a search engine.
+are both databases of L<Crypt::OpenSSL::CA::AlphabetSoup/OID>s that
+together contain pretty much all OIDs known to mankind.  The latter
+sports a search engine.
 
 =head1 STANDARDS
 
@@ -239,7 +239,7 @@ certify the user's certificate, all into a single binary blob.
 
 =item B<RFC2560>
 
-L<Crypt::OpenSSL::CA::Resources/OCSP>
+L<Crypt::OpenSSL::CA::AlphabetSoup/OCSP>
 
 =item B<RFC3739>
 
