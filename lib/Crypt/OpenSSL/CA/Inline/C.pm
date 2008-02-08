@@ -937,7 +937,7 @@ test "parse_RFC3280_time" => sub {
     };
 };
 
-skip_next_test "Proc::ProcessTable needed" if cannot_check_bytes_leaks;
+skip_next_test "Devel::Mallinfo needed" if cannot_check_bytes_leaks;
 test "parse_RFC3280_time_or_croak memory leaks" => sub {
     leaks_bytes_ok {
         for(1..10000) {
@@ -961,7 +961,7 @@ test "parse_serial" => sub {
     is(TestCRoutines::test_parse_serial("deadbeef1234"), 1);
 };
 
-skip_next_test "Proc::ProcessTable needed" if cannot_check_bytes_leaks;
+skip_next_test "Devel::Mallinfo needed" if cannot_check_bytes_leaks;
 test "parse_serial memory leaks" => sub {
     leaks_bytes_ok {
         for(1..10000) {

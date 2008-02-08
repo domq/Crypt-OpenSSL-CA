@@ -30,7 +30,7 @@ B<Crypt::OpenSSL::CA::Test> - Testing L<Crypt::OpenSSL::CA>
      }, -max => 6;
   };
 
-  skip_next_test "Proc::ProcessTable needed" if cannot_check_bytes_leaks;
+  skip_next_test "Devel::Mallinfo needed" if cannot_check_bytes_leaks;
   test "even leakier code" => sub {
      leaks_bytes_ok {
        # Do stuff
@@ -72,8 +72,7 @@ use File::Temp ();
 use base 'Exporter';
 BEGIN {
     our @EXPORT =
-        qw(fork_and_do
-           openssl_path run_thru_openssl
+        qw(openssl_path run_thru_openssl
            dumpasn1_available run_dumpasn1
            run_perl run_perl_ok run_perl_script run_perl_script_ok
            errstack_empty_ok
@@ -93,33 +92,6 @@ BEGIN {
                          %test_entity_certs
                          ));
     our %EXPORT_TAGS = ("default" => \@EXPORT);
-}
-
-=head2 fork_and_do ($sub)
-
-Runs $sub in a forked process, and returns the PID it runs under.  The
-child process calls $sub in void context, and terminates when $sub
-does so; if $sub terminates normally, the exit code of the child
-process will be 0, otherwise it will be 1.  The child process will
-B<not> perform global destruction, even if $sub contains an explicit
-call to L<perlfunc/exit>.
-
-=cut
-
-sub fork_and_do (&) {
-    my ($sub) = @_;
-    require POSIX; # For _exit, which unlike L<perlfunc/exit> refrains
-    # from doing global destruction, which would be a Bad Thing (even
-    # from a forked process this may have unwanted consequences such
-    # as saying goodbye on network sockets, destroying temporary
-    # files, etc.)
-    defined(my $pid = fork) or die "fork_and_do: fork failed";
-    return $pid if $pid;
-
-    # In child process only:
-    eval 'END { POSIX::_exit($?) }';
-    eval { $sub->(); exit(0) };
-    warn $@; exit(1);
 }
 
 =head2 openssl_path
@@ -310,15 +282,21 @@ sub errstack_empty_ok {
 
 Returns true iff L<Devel::Leak> is unavailable.
 
-=head2 cannot_check_bytes_leaks ()
-
-Returns true iff L<Proc::ProcessTable> is unavailable.
-
 =cut
 
 sub cannot_check_SV_leaks { ! eval { require Devel::Leak } }
 
-sub cannot_check_bytes_leaks { ! eval { require Proc::ProcessTable } }
+=head2 cannot_check_bytes_leaks ()
+
+Returns true iff L<Devel::Mallinfo> is unavailable or does nothing on
+this platform (eg MacOS).
+
+=cut
+
+sub cannot_check_bytes_leaks {
+    return 1 if ! eval { require Devel::Mallinfo };
+    return (! exists Devel::Mallinfo::mallinfo()->{uordblks});
+}
 
 =head2 leaks_SVs_ok ($coderef, %named_arguments)
 
@@ -361,7 +339,7 @@ sub leaks_SVs_ok (&@) {
 =head2 leaks_bytes_ok ($coderef, $testname)
 
 Executes $coderef and asserts (with L<Test::More>) that it doesn't
-leak memory (checked using L<Proc::ProcessTable>).  As a tester, you
+leak memory (checked using L<Devel::Mallinfo>).  As a tester, you
 should arrange for $coderef to manipulate about 100k of memory;
 smaller leaks will not be detected (see I<-max> below).
 
@@ -375,9 +353,10 @@ The name of the test, as in the second argument to L<Test::Builder/ok>.
 
 =item I<< -max => $threshold >>
 
-The minimum number of leaked bytes to look for.  The default is
-51200.  Setting this too low will trigger false positives, as
-L<Proc::ProcessTable> needs to allocate some memory of its own.
+The minimum number of leaked bytes to look for.  The default is 51200.
+Setting this too low will trigger false positives, as Perl does some
+funky memory management eg in hash tables and that may cause jitter in
+the memory consumption as measured from malloc's point of view.
 
 =back
 
@@ -385,40 +364,13 @@ L<Proc::ProcessTable> needs to allocate some memory of its own.
 
 sub leaks_bytes_ok (&@) {
     my ($coderef, %args) = @_;
-    require Proc::ProcessTable;
-    require POSIX;
+    require Devel::Mallinfo;
 
-    # Shamelessy lifted from L<Memchmark>
-    sub _find_process {
-        my $pid = shift || $$;
-        my $p=Proc::ProcessTable->new;
-        for (@{$p->table}) {
-            return $_ if $_->pid == $pid;
-        }
-    }
+    my $size_before = Devel::Mallinfo::mallinfo()->{uordblks} || 0;
 
+    $coderef->();
 
-    my $semfile = File::Spec->catfile
-        (_tempdir(), sprintf("leaks_bytes_semaphore.%d.%d", $$,
-                             _unique_number()));
-
-    my $size_before = _find_process->size;
-
-    my $pid = fork_and_do {
-        $coderef->();
-        File::Slurp::write_file($semfile, "");
-        sleep(0.2) while -f $semfile;
-        exit(0);
-    };
-    until (-f $semfile) {
-        select(undef, undef, undef, 0.2); # Sleeps 0.2 s
-        die("Code under test threw an exception or quit (code $?)")
-            if (waitpid($pid, POSIX::WNOHANG()) > 0);
-    }
-
-    my $size_after = _find_process($pid)->size;
-    unlink($semfile);
-    waitpid($pid, 0);
+    my $size_after = Devel::Mallinfo::mallinfo()->{uordblks} || 0;
 
     my $consumption = $size_after - $size_before;
     local $Test::Builder::Level = $Test::Builder::Level + 1;
@@ -1428,29 +1380,6 @@ use Crypt::OpenSSL::CA::Test;
 
 =cut
 
-test "fork_and_do" => sub {
-    my $pid = fork_and_do {
-        1;
-    };
-    waitpid($pid, 0); is($?, 0, "sub terminating normally");
-
-    $pid = fork_and_do {
-        die "don't worry, this message is normal\n";
-    };
-    waitpid($pid, 0); is($?, 1 << 8, "sub throwing an exception");
-
-    $pid = fork_and_do {
-        exit(42);
-    };
-    waitpid($pid, 0); is($?, 42 << 8, "sub exits with custom code");
-
-    $pid = fork_and_do {
-        sleep 10;
-    };
-    kill 9 => $pid;
-    waitpid($pid, 0); is($? & 127, 9, "we get signal");
-};
-
 test "run_thru_openssl" => sub {
 	my $version = run_thru_openssl(undef, "version");
     is($?, 0);
@@ -1597,7 +1526,7 @@ SCRIPT
 =cut
 
 begin_skipping_tests unless
-    eval { require Devel::Leak; require Proc::ProcessTable; };
+    eval { require Devel::Leak; require Devel::Mallinfo; };
 test "no leak" => sub {
     leaks_SVs_ok { };
     leaks_bytes_ok { };
@@ -1615,37 +1544,38 @@ sub leak {
    }
 }
 
-leaks_SVs_ok { leak };
 leaks_bytes_ok { leak };
+leaks_SVs_ok { leak };
 LEAKYSCRIPT
 
     my $out = run_perl($leakyscript);
     is($? & 255, 0, "we don't get signal");
 
-    like($out, qr/^not ok 1/m);
-    like($out, qr/^ok 2/m);
+    like($out, qr/^ok 1/m);
+    like($out, qr/^not ok 2/m);
     unlike($out, qr/Crypt.*CA/,
            "errors are reported at the proper stack depth");
 };
 
+skip_next_test if cannot_check_bytes_leaks; # Eg MacOS
 test "leaking bytes" => sub {
     my $leakyscript = <<'LEAKYSCRIPT';
 use Test::More no_plan => 1;
 use Crypt::OpenSSL::CA::Test;
 sub leak {
-    my $yin = { "load" => 'a' x 204800};
-    my $yang = { yin => $yin };
-    $yin->{yang} = $yang;
+    # Perl is getting smarter and smarter in memory mgmt, and we need
+    # to ward off constant folding for that test to fail as expected:
+    push(our @a, "abcde" x (10000 + scalar @a));
 }
 
-leaks_SVs_ok { leak };
-leaks_bytes_ok { leak };
+leaks_bytes_ok { leak() };
+leaks_SVs_ok { leak() };
 LEAKYSCRIPT
 
     my $out = run_perl($leakyscript);
     is($? & 255, 0, "we don't get signal");
-    like($out, qr/^ok 1/m);
-    like($out, qr/^not ok 2/m);
+    like($out, qr/^not ok 1/m);
+    like($out, qr/^ok 2/m);
     unlike($out, qr/Crypt.*CA/,
            "errors are reported at the proper stack depth");
 };

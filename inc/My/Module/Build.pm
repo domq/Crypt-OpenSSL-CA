@@ -893,12 +893,14 @@ sub _process_options {
     my $walk_isa; $walk_isa = sub {
         my ($class, $seenref, $resultref) = @_;
         return if $seenref->{$class}++;
-        no strict "refs";
+        my $symtab = do { no strict "refs"; \%{"${class}::"}; };
         push @$resultref, grep {
-            my $meth = *{${"${class}::"}{$_}}{CODE};
-            defined($meth) && $declared_options{overload::StrVal($meth)};
-        } (keys %{"${class}::"});
+            my $symbol = $symtab->{$_};
+            ref(\$symbol) eq "GLOB" && defined(*{$symbol}{CODE}) &&
+              $declared_options{overload::StrVal(*{$symbol}{CODE})};
+        } (keys %$symtab);
 
+        no strict "refs";
         $walk_isa->($_, $seenref, $resultref) foreach @{"${class}::ISA"};
     };
     my @alloptions; $walk_isa->( (ref($self) or $self), {}, \@alloptions);

@@ -1,6 +1,6 @@
 ---
 name: Crypt-OpenSSL-CA
-version: 0.12
+version: 0.14
 author:
   - 'Dominique Quatravaux <domq@cpan.org>'
 abstract: The crypto parts of an X509v3 Certification Authority
@@ -12,6 +12,7 @@ requires:
 build_requires:
   Convert::ASN1: 0.2
   Devel::Leak: 0
+  Devel::Mallinfo: 0
   Fatal: 0
   File::Find: 0
   File::Path: 0
@@ -30,14 +31,13 @@ build_requires:
   Module::Build::Compat: 0
   Net::SSLeay: 1.25
   POSIX: 0
-  Proc::ProcessTable: 0
   Test::Builder: 0
   Test::Group: 0
   Test::More: 0
 provides:
   Crypt::OpenSSL::CA:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.12
+    version: 0.14
   Crypt::OpenSSL::CA::CONF:
     file: lib/Crypt/OpenSSL/CA.pm
   Crypt::OpenSSL::CA::ENGINE:

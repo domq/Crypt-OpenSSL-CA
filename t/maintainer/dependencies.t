@@ -302,9 +302,9 @@ sub list_deps {
     return $retval;
 }
 
-=head2 skip_pod($filename, $fd, $pm)
+=head2 skip_pod ($filename, $fd, $pm)
 
-=head2 skip_here_document($filename, $fd, $line)
+=head2 skip_here_document ($filename, $fd, $line)
 
 Both functions advance $fd, an instance of L<IO::Handle>, to skip past
 non-Perl source code constructs, and return true if they indeed did
@@ -338,7 +338,7 @@ sub skip_here_document {
                       /x);
     my $leadingstuff = $1;
     my $heredelim = $2 || $3 || $4;
-    # Eval'ed here-docs don't count, they are treated as real code (!):
+    # Eval'ed here-docs don't count, they are treated as real code (yow!):
     return if ($leadingstuff =~ m/eval\s*$/);
     my $hereline = $fd->input_line_number;
     while (<$fd>) { return 1 if (/^\Q$heredelim\E/) }
@@ -347,7 +347,7 @@ Could not find end of here document ($heredelim) at $file line $hereline
 MESSAGE
 }
 
-=head2 scan_line_some_more($line, $filename, $fd)
+=head2 scan_line_some_more ($line, $filename, $fd)
 
 Works like L<Module::ScanDeps/scan_line>, and works around the
 limitations thereof by detecting more forms of dependencies.  $fd is
@@ -385,7 +385,7 @@ MESSAGE
     return @retval;
 }
 
-=head2 is_our_own_file($path)
+=head2 is_our_own_file ($path)
 
 Returns true iff $path is one of the files in this package, and
 therefore should not be counted as a dependency.
@@ -397,7 +397,7 @@ sub is_our_own_file {
     index($filename, $build->base_dir) == 0;
 }
 
-=head2 compare_dependencies_ok($gothashref, $expectedlistref)
+=head2 compare_dependencies_ok ($gothashref, $expectedlistref)
 
 As the name implies.  For each key in $gothashref which is not in
 $expectedlistref, shows the file name(s) and line number(s) of the
@@ -410,24 +410,29 @@ about a spurious dependency in Build.PL.
 sub compare_dependencies_ok {
     my ($gothashref, $expectedlistref, @testname) = @_;
 
-    # Note that the ->requires_for_build() are dealt with as though
+    my @required_for_build = qw(Module::Build);
+    push(@required_for_build, $build->requires_for_build()) if
+      $build->can("requires_for_build");
+
+    # Note that @required_for_build modules are dealt with as though
     # they were pervasive, as we are not enumerating dependencies in
     # the build system and therefore cannot check them for accuracy.
-    my %bogus_expected = map { ($_ => 1) }
-        (@pervasives, $build->requires_for_build(),
-         @maintainer_dependencies, @sunken_dependencies);
-    my %expected = map { ( ($is_subpackage_of{$_} || $_) => 1) }
-        grep { !$bogus_expected{$_} } @$expectedlistref;
+    my @expected = filter_and_canonicalize
+      ([@pervasives, @required_for_build,
+        @maintainer_dependencies, @sunken_dependencies],
+       @$expectedlistref);
 
-    my %bogus_got = map { ($_ => 1) }
-        (@pervasives, $build->requires_for_build(), @ignore);
-    my %got = map { ( ($is_subpackage_of{$_} || $_) => 1) }
-        grep { !$bogus_got{$_} } (keys %$gothashref);
+    my @got = filter_and_canonicalize
+      ([@pervasives, @required_for_build, @ignore],
+       keys %$gothashref);
 
+    # Poor man's L<Array::Compare> rolled as a test assertion:
+
+    my %expected = map { ( $_ => 1 ) } @expected;
+    my %got = map { ( $_ => 1 ) } @got;
     return if &is(join(" ", sort keys %got),
                   join(" ", sort keys %expected), @testname);
 
-    our $dependencies;
     foreach my $notfound (grep {! $expected{$_}} (keys %got)) {
         foreach my $match (@{$gothashref->{$notfound}}) {
             diag(sprintf("%s seems to be be referenced in %s line %d\n",
@@ -437,4 +442,19 @@ sub compare_dependencies_ok {
     foreach my $spurious (grep { ! $got{$_}} (keys %expected)) {
         diag("$spurious seems to be a spurious prerequisite in Build.PL");
     }
+}
+
+=head2 filter_and_canonicalize ($exceptions, @packagenames)
+
+Processes @packagenames, a list of Perl package names, by eliminating
+entries that are in $exceptions (a reference to a list) and converting
+packages to their canonical name using L</%is_subpackage_of>.
+
+=cut
+
+sub filter_and_canonicalize {
+    my ($exceptions, @packages) = @_;
+    my %exceptions_set = map { ($_ => 1) } @$exceptions;
+    return map { $is_subpackage_of{$_} || $_ }
+      (grep { ! exists $exceptions_set{$_} } @packages);
 }
