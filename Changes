@@ -1,5 +1,10 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.14    08 Feb 2008
+        Fixes bug in the build process that causes the build to fail
+        on Perl 5.10; new, more reliable method for memory leak tests.
+        No actual code changes.
+
 0.12    06 Feb 2008
         Improved readability of code examples (in examples/) as per
         the suggestions of Richard Hartmann

@@ -6,7 +6,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = "0.12";
+our $VERSION = "0.14";
 
 =head1 NAME
 
@@ -2878,7 +2878,7 @@ test "X509_NAME->new_utf8" => sub {
     }
 };
 
-skip_next_test "Proc::ProcessTable needed" if cannot_check_bytes_leaks;
+skip_next_test "Devel::Mallinfo needed" if cannot_check_bytes_leaks;
 test "X509_NAME leaks" => sub {
     leaks_bytes_ok {
         for(1..10000) {
