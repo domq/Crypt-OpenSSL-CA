@@ -32,7 +32,7 @@ if ($Is_DOSish) {
         push @path_ext, qw(.com .exe .bat); # Win9X or other: doesn't have PATHEXT, so needs hardcoded.
     }
 }
-elsif ($Is_VMS) { 
+elsif ($Is_VMS) {
     push @path_ext, qw(.exe .com);
 }
 
@@ -43,7 +43,7 @@ sub which {
 
     my $all = wantarray;
     my @results = ();
-    
+
     # check for aliases first
     if ($Is_VMS) {
         my $symbol = `SHOW SYMBOL $exec`;
@@ -96,7 +96,7 @@ sub which {
             }
         }
     }
-    
+
     if($all) {
         return @results;
     } else {
@@ -120,9 +120,9 @@ File::Which - Portable implementation of the `which' utility
 
   use File::Which;                  # exports which()
   use File::Which qw(which where);  # exports which() and where()
-  
+
   my $exe_path = which('perldoc');
-  
+
   my @paths = where('perl');
   - Or -
   my @paths = which('perl'); # an array forces search for all of them
@@ -219,7 +219,7 @@ the same terms as Perl itself.
 
 =head1 See Also
 
-L<File::Spec>, L<which(1)>, Perl Power Tools:
+L<File::Spec>, B<which(1)>, Perl Power Tools:
 http://www.perl.com/language/ppt/index.html .
 
 =cut

@@ -6,7 +6,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = "0.14";
+our $VERSION = "0.15";
 
 =head1 NAME
 
@@ -72,9 +72,9 @@ L<Crypt::OpenSSL::CA::Inline::C>.
 
 Most of said glue code is accessible as class and instance methods in
 the ancillary classes such as L</Crypt::OpenSSL::CA::X509> and
-L</Crypt::OpenSSL::CA::X509_CRL>, not in the parent
-I<Crypt::OpenSSL::CA> namespace.  Each of these classes wrap around
-OpenSSL's ``object class'' with the same name
+L</Crypt::OpenSSL::CA::X509_CRL>; the parent namespace
+I<Crypt::OpenSSL::CA> is basically empty.  Each of these ancillary
+classes wrap around OpenSSL's ``object class'' with the same name
 (e.g. L</Crypt::OpenSSL::CA::X509_NAME> corresponds to the
 C<X509_NAME_foo> functions in C<libcrypto.so>).  OpenSSL concepts are
 therefore made available in an elegant object-oriented API; moreover,
@@ -801,12 +801,19 @@ L</Crypt::OpenSSL::CA::PublicKey> object.
 =cut
 
 use Crypt::OpenSSL::CA::Inline::C <<"GET_PUBLIC_KEY";
+
+#if OPENSSL_VERSION_NUMBER < 0x00908000
+#define CONST_IF_D2I_PUBKEY_WANTS_ONE
+#else
+#define CONST_IF_D2I_PUBKEY_WANTS_ONE const
+#endif
+
 static
 SV* get_public_key(SV* sv_self) {
     EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, sv_self);
     EVP_PKEY* retval = NULL;
     unsigned char* asn1buf = NULL;
-    const unsigned char* asn1buf_copy;
+    CONST_IF_D2I_PUBKEY_WANTS_ONE unsigned char* asn1buf_copy;
     int size;
 
     /* This calling idiom requires OpenSSL 0.9.7 */
@@ -2073,6 +2080,50 @@ SV* sign(SV* sv_self, SV* privkey, char* digestname) {
 
 SIGN
 
+=head2 supported_digests()
+
+This is a class method (invoking it as an instance method also works
+though).  Returns the list of all supported digest names for the
+second argument of L</sign>.  The contents of this list depends on the
+OpenSSL version and the details of how it was compiled.
+
+=cut
+
+use Crypt::OpenSSL::CA::Inline::C <<"SUPPORTED_DIGESTS";
+#include <openssl/objects.h>
+
+static void _push_name_to_Perl_stack(const OBJ_NAME *obj,
+                                     void *arg) {
+
+    /* Mmkay so as its name implies, this walker function needs access
+       to the Perl stack.  If we did it in Inline::C-Cookbook style,
+       each callback invocation would clobber the values previously
+       pushed :-(.  So we need to break Inline_Stack_* encapsulation
+       and actually pass around "register SV** sp", the stack context
+       fetched by Inline_Stack_Vars and altered by Inline_Stack_Push.
+       There goes elegance. */
+
+    SV*** sp_ref = (SV ***) arg;
+    SV** sp = *sp_ref;
+    Inline_Stack_Push(sv_2mortal(newSVpv(obj->name, 0))); /* Alters sp */
+    *sp_ref = sp;
+}
+
+static
+void supported_digests(SV* unused_self) {
+    Inline_Stack_Vars;
+    SV** sp_copy; /* See comment above */
+
+    Inline_Stack_Reset;
+    sp_copy = sp;
+    OBJ_NAME_do_all_sorted(OBJ_NAME_TYPE_MD_METH, &_push_name_to_Perl_stack,
+                           (void *) &sp_copy);
+    sp = sp_copy;
+    Inline_Stack_Done;
+}
+
+SUPPORTED_DIGESTS
+
 =head1 Crypt::OpenSSL::CA::X509_CRL
 
 This Perl class wraps around OpenSSL's CRL creation features.
@@ -2437,6 +2488,17 @@ SV* sign(SV* sv_self, SV* sv_key, char* digestname) {
     return BIO_mem_to_SV(mem);
 }
 SIGN
+
+=head2 supported_digests()
+
+This is a class method (invoking it as an instance method also works
+though).  Returns the list of all supported digest names for the
+second argument of L</sign>.  The contents of this list depends on the
+OpenSSL version and the details of how it was compiled.
+
+=cut
+
+sub supported_digests { Crypt::OpenSSL::CA::X509->supported_digests }
 
 =head2 dump ()
 
@@ -3210,6 +3272,19 @@ test "signing several times over the same ::X509 instance" => sub {
         }
     };
 
+};
+
+test "->supported_digests()" => sub {
+    my @supported_digests = Crypt::OpenSSL::CA::X509->supported_digests();
+    ok(grep { $_ eq "md5" } @supported_digests)
+      or warn join(" ", @supported_digests);
+    unless(cannot_check_bytes_leaks) {
+        leaks_bytes_ok {
+            for(1..5000) {
+                my @unused = Crypt::OpenSSL::CA::X509->supported_digests();
+            }
+        };
+    }
 };
 
 skip_next_test if cannot_check_bytes_leaks;

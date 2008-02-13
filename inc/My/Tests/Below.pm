@@ -1,6 +1,10 @@
 #!perl -Tw
 # Copyright Dominique Quatravaux 2006 - Licensed under the same terms as Perl itself
 
+use strict;
+use warnings;
+use 5.006; # "our" keyword
+
 =head1 NAME
 
 B<My::Tests::Below> - invoke a test suite at the end of a module.

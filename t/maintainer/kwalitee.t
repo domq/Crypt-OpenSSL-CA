@@ -2,11 +2,11 @@
 
 =head1 NAME
 
-kwalitee.t - Applies L<Test:Kwalitee> on the module.
+kwalitee.t - Applies (the spirit of) L<Test:Kwalitee> on the module.
 
 =head1 DESCRIPTION
 
-Me mostly do the same thing as L<Test::Kwalitee>, ie one test
+We mostly do the same thing as L<Test::Kwalitee>, ie one test
 assertion per kwalitee metric, except that we actually make it work
 (by default I<Test::Kwalitee> will eg try to POD-check the files in
 C<_build>, I am neither amused nor making this up).  To this end, we

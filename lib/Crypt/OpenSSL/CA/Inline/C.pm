@@ -294,7 +294,7 @@ static inline void* __perl_unwrap(const char* file, int line,
                 "Perl argument (expected an object blessed "
                 "in class ``%s'')", file, line, (class));
     }
-    return (void *)SvIV(SvRV(obj));
+    return (void *)(intptr_t)SvIV(SvRV(obj));
 }
 
 static inline SV* openssl_buf_to_SV(char* string, int length) {
@@ -555,31 +555,25 @@ the caller-provided C code.
 sub compile_everything {
     my ($class) = @_;
     keys %c_code; while(my ($package, $c_code) = each %c_code) {
-        my $compile_params =
-            ($class->full_debugging ? <<"WITH_DEBUGGING" :
+        my $compile_params = ($class->full_debugging ?
+                              <<'COMPILE_PARAMS_DEBUG' :
+    CCFLAGS => "-Wall -Wno-unused -Werror -save-temps",
     OPTIMIZE => "-g",
     CLEAN_AFTER_BUILD => 0,
-WITH_DEBUGGING
-             <<"WO_DEBUGGING");
+COMPILE_PARAMS_DEBUG
+                              <<'COMPILE_PARAMS_OPTIMIZED');
     OPTIMIZE => "-g -O2",
-WO_DEBUGGING
+COMPILE_PARAMS_OPTIMIZED
 
-        my $openssl_params = sprintf
-            (<<"LIBS_PARAMS",
-    LIBS => "-lcrypto -lssl%s",
-LIBS_PARAMS
-             ( $ENV{BUILD_OPENSSL_LDFLAGS} ?
-               " $ENV{BUILD_OPENSSL_LDFLAGS}" : ""));
+        my $openssl_params = sprintf('LIBS => "%s -lcrypto -lssl",',
+                                     ($ENV{BUILD_OPENSSL_LDFLAGS} or ""));
         if ($ENV{BUILD_OPENSSL_CFLAGS}) {
-            $openssl_params .= <<"CFLAGS_PARAMS";
-    INC => "$ENV{BUILD_OPENSSL_CFLAGS}",
-CFLAGS_PARAMS
+            $openssl_params .= qq' INC => "$ENV{BUILD_OPENSSL_CFLAGS}",';
         }
 
         my $version_params =
-            ( $Crypt::OpenSSL::CA::VERSION ? <<"VERSION_PARAMS" : "" );
-    VERSION => \$Crypt::OpenSSL::CA::VERSION,
-VERSION_PARAMS
+          ( $Crypt::OpenSSL::CA::VERSION ?
+            qq'VERSION => "$Crypt::OpenSSL::CA::VERSION",' : "" );
 
         my $boot_section = _c_boot_section;
 
@@ -587,10 +581,9 @@ VERSION_PARAMS
 package $package;
 use Inline C => Config =>
     NAME => '$package',
-    CCFLAGS => "-Wall -Wno-unused -Werror",
 $compile_params
-$version_params
-$openssl_params
+    $version_params
+    $openssl_params
     BOOT => <<'BOOT_SECTION',
 $boot_section
 BOOT_SECTION
@@ -604,16 +597,7 @@ FAKE_Inline_C_INVOCATION
 
 =head3 full_debugging
 
-Returns true iff the environment variable C<FULL_DEBUGGING> is set.
-This causes the C code to be compiled without optimization, allowing
-gdb to dump symbols of static functions with only one call site (which
-comprises most of the C code in L<Crypt::OpenSSL::CA>).  Also, the
-temporary build files are left intact if C<FULL_DEBUGGING> is set.
-
-Developpers, please note that in the absence of C<FULL_DEBUGGING>, the
-default compiler flags are C<-g -O2>, still allowing for a range of
-debugging strategies.  C<FULL_DEBUGGING> should therefore only be set
-on a one-shot basis by developpers who have a specific need for it.
+Returns true iff the environment variable L</FULL_DEBUGGING> is set.
 
 =cut
 
@@ -689,7 +673,16 @@ INSTALLED_VERSION
 
 =head2 FULL_DEBUGGING
 
-See L</full_debugging>
+Setting this variable to 1 causes the C code to be compiled without
+optimization, allowing gdb to dump symbols of static functions with
+only one call site (which comprises most of the C code in
+L<Crypt::OpenSSL::CA>).  Also, the temporary build files are left
+intact if C<FULL_DEBUGGING> is set.
+
+Developpers, please note that in the absence of C<FULL_DEBUGGING>, the
+default compiler flags are C<-g -O2>, still allowing for a range of
+debugging strategies.  C<FULL_DEBUGGING> should therefore only be set
+on a one-shot basis by developpers who have a specific need for it.
 
 =head2 BUILD_OPENSSL_CFLAGS
 
@@ -797,8 +790,8 @@ char* TEST_char0_value(SV* scalar_under_test) {
 CHAR0_TEST
 
     is(Char0Test::TEST_char0_value(2 * 12), "24", "char0_value");
-    is(Char0Test::TEST_char0_value(undef), "",
-       "char0_value shall not SEGV on undef");
+    is(do { no warnings "uninitialized"; Char0Test::TEST_char0_value(undef) },
+       "", "char0_value shall not SEGV on undef");
 };
 
 skip_next_test "Devel::Leak needed" if cannot_check_SV_leaks;
