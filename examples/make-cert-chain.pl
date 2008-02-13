@@ -165,8 +165,8 @@ UTF-8 support.  The validity period (notBefore and notAfter) can be of
 arbitrary size, and transition from utcTime to generalizedTime is
 handled properly.  SubjectAltNames are fully supported regardless of
 type and multiplicity; ditto for certificate policies.  The signature
-algorithm is RSA and the hash can be set to MD5 (but don't!), SHA1 or
-SHA256.  OpenSSL's algorithm for RSA key fingerprints (also known as
+algorithm is RSA and the hash can be set to any of OpenSSL's supported
+hashes.  OpenSSL's algorithm for RSA key fingerprints (also known as
 X509 KeyIDs) is available (but not mandatory) for the subject and
 authority key identifiers.
 
@@ -213,7 +213,13 @@ authority key identifiers.
   $user_cert->set_extension
     (subjectAltName => 'email:johndoe@example.com,email:johndoe@example.net');
 
-  our $user_cert_as_text = $user_cert->sign($ca_privkey, "sha256");
+  my $fancy_digest_alg = "sha256";
+  # Ah, but some old builds of OpenSSL don't have SHA-256:
+  if (! grep { $fancy_digest_alg eq $_ }
+      Crypt::OpenSSL::CA::X509->supported_digests()) {
+      $fancy_digest_alg = "ripemd160";
+  }
+  our $user_cert_as_text = $user_cert->sign($ca_privkey, $fancy_digest_alg);
   print $user_cert_as_text;
 }
 

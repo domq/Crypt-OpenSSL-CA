@@ -80,7 +80,7 @@ are listed.
 =cut
 
 our @pervasives = qw(base warnings strict overload utf8 vars constant
-                     Exporter Data::Dumper Carp
+                     Config Exporter Data::Dumper Carp
                      Getopt::Std Getopt::Long
                      DynaLoader ExtUtils::MakeMaker
                      POSIX Fcntl Cwd Sys::Hostname

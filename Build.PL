@@ -52,24 +52,46 @@ my $builder = $class->new
     create_makefile_pl  => 'passthrough',
 );
 
+warn <<"MESSAGE";
+
+Checking OpenSSL version number...
+
+MESSAGE
+my $openssl_version = $builder->openssl_version_number();
+
+if (hex($openssl_version) < 0x00907000) {
+    fail_and_suggest_switches(<<"MESSAGE");
+OpenSSL version 0.9.7 expected; I found only version $openssl_version.
+
+MESSAGE
+} else {
+    warn <<"MESSAGE";
+Found $openssl_version.  Good.
+
+MESSAGE
+}
+
 $builder->create_build_script();
 
 1;
 
 __END__
 
+use strict;
+use warnings;
 use File::Spec::Functions qw(catdir catfile);
+use File::Spec::Unix;
 use IO::File;
 use FindBin qw($Bin);
 use My::Module::Build;
 
 =head1 CUSTOM BUILD OPTIONS
 
-=item I<< --openssl-cflags=<path> >>
+=head2 --openssl-cflags=I<string>
 
-Provides the path where the OpenSSL header files are to be found.
-Default is to query C<pkg-config>, or failing that, to use the
-compiler-provided system defaults.
+Provides the CFLAGS to pass to the compiler so that it finds OpenSSL
+header files etc.  Default is to query C<pkg-config>, or failing that,
+to use no particular CFLAGS.
 
 =cut
 
@@ -77,11 +99,11 @@ sub openssl_cflags : Config_Option(type="string") {
     (default => (`pkg-config --cflags openssl 2>/dev/null`));
 }
 
-=item I<< --openssl-ldflags=<path> >>
+=head2 --openssl-ldflags=I<string>
 
-Provides the path where the OpenSSL libraries are to be found.
-Default is to query C<pkg-config>, or failing that, to use the
-compiler-provided system defaults.
+Provides the LDFLAGS to pass to the linker so that it finds OpenSSL
+libraries etc.  Default is to query C<pkg-config>, or failing that, to
+use only C<-lcrypto -lssl>.
 
 =cut
 
@@ -89,11 +111,7 @@ sub openssl_ldflags : Config_Option(type="string") {
     (default => (`pkg-config --libs openssl 2>/dev/null`));
 }
 
-=head1 CUSTOM COMMAND-LINE SWITCHES
-
-=over
-
-=item I<full_debugging=1>
+=head2 --full_debugging=1
 
 Enables L<Crypt::OpenSSL::CA::Inline::C/full_debugging> while running
 C<./Build test>.  Setting the FULL_DEBUGGING environment variable to 1
@@ -106,31 +124,26 @@ sub ACTION_test {
     my $self = shift;
 
     local $self->{args} = {%{$self->{args}}};
-    local %ENV = $self->_customize_env(%ENV);
-    # And then customize some more:
-    delete $ENV{FULL_DEBUGGING};
-
+    my %env = $self->customize_env(%ENV);
+    delete $env{FULL_DEBUGGING};
     if ($self->{args}->{full_debugging}) {
-        $ENV{FULL_DEBUGGING} = 1;
+        $env{FULL_DEBUGGING} = 1;
         $self->use_blib(0);
     }
 
     $self->depends_on("buildXS") if $self->use_blib;
 
+    local %ENV = %env;
     return $self->SUPER::ACTION_test;
 }
 
-=back
-
 =head1 CUSTOM BUILD METHODS
 
-=over
-
-=item I<ACTION_build()>
+=head2 ACTION_build ()
 
 Overloaded so as to also call L</ACTION_buildXS>.
 
-=item I<ACTION_buildXS()>
+=head2 ACTION_buildXS ()
 
 Builds the XS modules for distribution into L<blib/arch>.
 
@@ -155,29 +168,26 @@ sub ACTION_buildXS {
 
     unlink @sofiles;
 
+    my $version = $self->dist_version;
     # And now some ugly kludge to make everything hold together.
     # Inline::C wants to use MakeMaker; we don't.  So let's call it in
     # a sub-Perl.
-    my $version = $self->dist_version;
-    my $script = <<"SCRIPT";
+    local $ENV{PERL_INLINE_BUILD_NOISY} = 1;
+    $self->run_subscript(<<"SCRIPT", $version, catdir(qw(blib arch)));
 BEGIN { \$Crypt::OpenSSL::CA::VERSION = '$version' ; }
 use Crypt::OpenSSL::CA::Inline::C;
 use Inline qw(_INSTALL_);
 use Crypt::OpenSSL::CA;
 SCRIPT
 
-    chomp($script); $script =~ s/\n/ /g;
-    my @cmdline = ($^X, "-I" => catdir($self->topdir, "lib"),
-                   -e => $script, $version, catdir(qw(blib arch)));
-    warn(join(" ", @cmdline, "\n"));
-    local %ENV = $self->_customize_env(%ENV);
-    $ENV{PERL_INLINE_BUILD_NOISY} = 1;
-    system(@cmdline);
-    die "Command exited with status " . ($? >> 8) if $?;
     do { unlink or die "Cannot unlink($_): $!" } for glob("*.inl");
 }
 
-=item I<process_pm_files>
+=begin internals
+
+=head1 OVERLOADED METHODS
+
+=head2 process_pm_files ()
 
 Overloaded from parent class so as to reserve a special treatment to
 L<Crypt::OpenSSL::CA::Inline::C> (see its POD).
@@ -188,8 +198,7 @@ sub process_pm_files {
     my $self = shift;
     $self->SUPER::process_pm_files(@_);
 
-    local $_ = catdir($self->topdir, qw(lib Crypt OpenSSL CA Inline C.pm));
-    require;
+    $self->require("Crypt::OpenSSL::CA::Inline::C");
 
     my $out = catfile(qw(blib lib Crypt OpenSSL CA Inline C.pm));
     unlink($out);
@@ -200,7 +209,9 @@ sub process_pm_files {
          die "Cannot write to $out: $!\n";
 }
 
-=item I<topir>
+=head1 ADDITIONAL METHODS
+
+=head2 topdir ()
 
 Returns the directory in which C<Build.PL> resides.
 
@@ -213,26 +224,20 @@ sub topdir {
     return $FindBin::Bin;
 }
 
-=back
-
-=begin internals
-
-=head1 INTERNAL METHODS
-
-=head2 _customize_env(%env)
+=head2 customize_env (%env)
 
 Takes %env as an environment hash and returns a modified copy of it
 where the L<Crypt::OpenSSL::CA/ENVIRONMENT VARIABLES> are set.  To be
 used typically as
 
-   local %ENV = $self->_customize_env(%ENV);
+   local %ENV = $self->customize_env(%ENV);
 
 right before doing anything that might result in the inline C code
 being recompiled.
 
 =cut
 
-sub _customize_env {
+sub customize_env {
     my ($self, %env) = @_;
     foreach my $item (qw(openssl_ldflags openssl_cflags)) {
         my $varname = "BUILD_" . uc($item);
@@ -241,6 +246,140 @@ sub _customize_env {
             if $self->option_value("$item");
     }
     return %env;
+}
+
+=head2 run_subscript ($script_text, @argv)
+
+Runs $script_text, a (possibly multi-line) script, in a sub-Perl with
+the environment appropriately set up so that it can invoke code in
+this package.  @argv is passed on the command line.  Dies upon errors.
+
+=cut
+
+sub run_subscript {
+    my ($self, $script, @argv) = @_;
+    chomp($script); $script =~ s/\n/ /g;
+    my @cmdline = ($^X, "-I" => catdir($self->topdir, "lib"),
+                   -e => $script, @argv);
+    warn(join(" ", @cmdline, "\n"));
+    local %ENV = $self->customize_env(%ENV);
+    system(@cmdline);
+    die "Command exited with status " . ($? >> 8) if $?;
+}
+
+=head2 openssl_version_number ()
+
+Returns the version number of the OpenSSL libraries that we are going
+to link against, as an OPENSSL_VERSION_NUMBER string eg
+C<0x0090704f>.  Note that L<perlfunc/hex> works just fine on that.
+
+=cut
+
+sub openssl_version_number {
+    my ($self) = @_;
+
+    $self->require("Crypt::OpenSSL::CA::Inline::C");
+    local %ENV = $self->customize_env(%ENV);
+
+    my $unique_package = "Crypt::OpenSSL::CA::ExtractVersionNumber$$";
+
+    my $test_c_program = <<"SOME_C_BONDAGE";
+package $unique_package;
+
+use Crypt::OpenSSL::CA::Inline::C <<"EXTRACT_VERSION_NUMBER";
+#include <openssl/opensslv.h>
+#include <openssl/crypto.h>
+
+static
+long from_include_files() {
+  return OPENSSL_VERSION_NUMBER;
+}
+
+static
+long from_linked_library() {
+  return SSLeay();
+}
+
+EXTRACT_VERSION_NUMBER
+
+use Crypt::OpenSSL::CA::Inline::C "__END__";
+
+1;
+
+SOME_C_BONDAGE
+
+
+    if (eval "package $unique_package;\n$test_c_program; 1") {
+        my ($incversion, $libversion) = map
+          { sprintf("0x%xd", $unique_package->can($_)->()) }
+            (qw(from_include_files from_linked_library));
+
+        return $libversion if ($incversion eq $libversion);
+        fail_and_suggest_switches(<<"VERSION_MISMATCH");
+
+*** VERSION MISMATCH in OpenSSL test program! ***
+
+The version number extracted from OpenSSL's header files ($incversion)
+differs from the one returned by a call to OpenSSL's SSLeay() ($libversion).
+
+This means that several versions of the OpenSSL library are present
+(in whole or in part) on your system.
+VERSION_MISMATCH
+    } else {
+        # Bummer, C compilation went bang.  Re-run it with debugging
+        # on so that the user gets a clue:
+        local $ENV{PERL_INLINE_BUILD_NOISY} = 1;
+        eval "package Crypt::OpenSSL::CA::ExtractVersionNumber;\n" .
+          $test_c_program;
+        fail_and_suggest_switches(<<"MESSAGE");
+$@
+
+Compiling and linking a test OpenSSL program failed; please examine
+the errors above.  You may have to install OpenSSL's development kit
+according to your distribution's instructions.
+MESSAGE
+    }
+}
+
+=head2 require ($modulename)
+
+Like L<perlfunc/require>; demands that $modulename, a module bundled
+with this CPAN distribution, be loaded in the current Perl process.
+
+=cut
+
+sub require {
+    my ($self, $modulename) = @_;
+    local @INC = (scalar(catdir($self->topdir, "lib")), @INC);
+    eval "require $modulename; 1" or die $@;
+}
+
+=head1 UTILITY_FUNCTIONS
+
+=head2 fail_and_suggest_switches ($message)
+
+Terminates Build.PL with $message as an error message, further hinting
+the user to retry with appropriate command line switches
+--openssl-cflags and --openssl-ldflags.  Does not return.
+
+=cut
+
+sub fail_and_suggest_switches {
+    my ($message) = @_;
+
+    $message =~ s/\s*$//gs; $message .= "\n" if $message;
+    warn $message . <<"SUGGEST_COMMAND_LINE_SWITCHES"; exit 1;
+
+Maybe you could try re-running Build.PL with appropriate values for
+--openssl-cflags and --openssl-ldflags, for instance:
+
+  perl Build.PL --openssl-cflags=-I/usr/local/lib/openssl/include \\
+        --openssl-libs=-L/usr/local/lib/openssl/lib
+
+Hint: don't sprinkle spaces where not necessary, as they are known to
+confuse the GNU linker!
+
+SUGGEST_COMMAND_LINE_SWITCHES
 }
 
 =end internals

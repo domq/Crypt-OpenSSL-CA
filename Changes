@@ -1,13 +1,18 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.15    13 Feb 2008
+        Added ->supported_digests(). Now the OpenSSL version is validated
+          at perl Build.PL time. Works with 0.9.7. More cpan-testers
+          bugfixes.
+
 0.14    08 Feb 2008
-        Fixes bug in the build process that causes the build to fail
-        on Perl 5.10; new, more reliable method for memory leak tests.
-        No actual code changes.
+        Fixes bug in the build process that caused it to fail
+          on Perl 5.10; improved memory leak checking with
+          Devel::Mallinfo.  No actual code changes.
 
 0.12    06 Feb 2008
         Improved readability of code examples (in examples/) as per
-        the suggestions of Richard Hartmann
+          the suggestions of Richard Hartmann
         Tested on Mac OS X 10.5 with Macports Perl
 
 0.11    05 Apr 2007

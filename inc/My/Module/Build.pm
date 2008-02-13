@@ -1,6 +1,10 @@
 #!perl -wT
 # Copyright Dominique Quatravaux 2006 - Licensed under the same terms as Perl itself
 
+use strict;
+use warnings;
+use 5.006; # "our" keyword
+
 =head1 NAME
 
 My::Module::Build - Helper for releasing my (DOMQ's) code to CPAN
