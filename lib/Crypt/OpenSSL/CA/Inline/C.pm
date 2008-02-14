@@ -524,7 +524,6 @@ sub import {
     return $class->compile_everything if ($c_code eq "__END__");
 
     my ($package, $file, $line) = caller;
-    $c_code{$package} ||= _c_boilerplate;
     $c_code{$package} .= sprintf(qq'#line %d "%s"\n', $line + 1, $file)
         . $c_code;
     return;
@@ -533,66 +532,83 @@ sub import {
 =head3 compile_everything ()
 
 Called when L</the "__END__" pragma> is seen.  Invokes
-L<Inline/import> once for every package (that is, every key in
-L</%c_code>), with the following tweaks:
-
-=over
-
-=item *
-
-L<Inline::C> is configured to compile with all warnings turned into
-errors (i.e. C<-Wall -Werror>) and to link with the OpenSSL libraries;
-
-=item *
-
-the C code that implements the L</Standard Library> is prepended to
-the caller-provided C code.
-
-=back
+L<compile_namespace> once for every package (that is, every key in
+L</%c_code>), prepending L<_c_boilerplate> each time.
 
 =cut
 
 sub compile_everything {
     my ($class) = @_;
-    keys %c_code; while(my ($package, $c_code) = each %c_code) {
-        my $compile_params = ($class->full_debugging ?
-                              <<'COMPILE_PARAMS_DEBUG' :
+    foreach my $package (keys %c_code) {
+        $class->compile_into($package, _c_boilerplate . $c_code{$package},
+                             -boot_section => _c_boot_section());
+    }
+}
+
+=head3 compile_into ($package, $c_code, %named_options)
+
+Compile $c_code and make its functions available as part of $package's
+namespace, courtesy to L<Inline::C> magic.  Works by invoking
+L<Inline/import> in a tweaked fashion, so as to compile with all
+warnings turned into errors (i.e. C<-Wall -Werror>) and to link with
+the OpenSSL libraries.  The environment variables are taken into
+account (see L</ENVIRONMENT VARIABLES>).
+
+Available named options are:
+
+=over
+
+=item B<< -boot_section => $c_code >>
+
+Adds $c_code to the BOOT section of the generated .so module.
+
+=back
+
+=cut
+
+sub compile_into {
+    my ($class, $package, $c_code, %opts) = @_;
+    my $compile_params = ($class->full_debugging ?
+                          <<'COMPILE_PARAMS_DEBUG' :
     CCFLAGS => "-Wall -Wno-unused -Werror -save-temps",
     OPTIMIZE => "-g",
     CLEAN_AFTER_BUILD => 0,
 COMPILE_PARAMS_DEBUG
-                              <<'COMPILE_PARAMS_OPTIMIZED');
+                          <<'COMPILE_PARAMS_OPTIMIZED');
     OPTIMIZE => "-g -O2",
 COMPILE_PARAMS_OPTIMIZED
 
-        my $openssl_params = sprintf('LIBS => "%s -lcrypto -lssl",',
-                                     ($ENV{BUILD_OPENSSL_LDFLAGS} or ""));
-        if ($ENV{BUILD_OPENSSL_CFLAGS}) {
-            $openssl_params .= qq' INC => "$ENV{BUILD_OPENSSL_CFLAGS}",';
-        }
+      my $openssl_params = sprintf('LIBS => "%s -lcrypto -lssl",',
+                                   ($ENV{BUILD_OPENSSL_LDFLAGS} or ""));
+    if ($ENV{BUILD_OPENSSL_CFLAGS}) {
+        $openssl_params .= qq' INC => "$ENV{BUILD_OPENSSL_CFLAGS}",';
+    }
 
-        my $version_params =
-          ( $Crypt::OpenSSL::CA::VERSION ?
-            qq'VERSION => "$Crypt::OpenSSL::CA::VERSION",' : "" );
+    my $version_params =
+      ( $Crypt::OpenSSL::CA::VERSION ?
+        qq'VERSION => "$Crypt::OpenSSL::CA::VERSION",' : "" );
 
-        my $boot_section = _c_boot_section;
+    my $boot_params = ($opts{-boot_section} ? <<"BOOT_CONFIG" : "");
+    BOOT => <<'BOOT_SECTION',
+$opts{-boot_section}
+BOOT_SECTION
+BOOT_CONFIG
 
-        eval <<"FAKE_Inline_C_INVOCATION"; die $@ if $@;
+    eval <<"FAKE_Inline_C_INVOCATION"; die $@ if $@;
 package $package;
 use Inline C => Config =>
     NAME => '$package',
 $compile_params
     $version_params
     $openssl_params
-    BOOT => <<'BOOT_SECTION',
-$boot_section
-BOOT_SECTION
+    $boot_params
 ;
 use Inline C => <<'C_CODE';
 $c_code
 C_CODE
 FAKE_Inline_C_INVOCATION
-    }
+
+    return 1;
 }
 
 =head3 full_debugging
