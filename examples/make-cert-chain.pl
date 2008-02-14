@@ -219,6 +219,8 @@ authority key identifiers.
       Crypt::OpenSSL::CA::X509->supported_digests()) {
       $fancy_digest_alg = "ripemd160";
   }
+  warn "And here is a certificate using $fancy_digest_alg as the digest!\n";
+
   our $user_cert_as_text = $user_cert->sign($ca_privkey, $fancy_digest_alg);
   print $user_cert_as_text;
 }
