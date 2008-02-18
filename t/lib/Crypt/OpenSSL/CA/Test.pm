@@ -133,15 +133,16 @@ sub run_thru_openssl {
     defined(my $binary = openssl_path) or die "Cannot find openssl binary";
     unshift(@cmdline, $binary);
 
-    if (wantarray) {
-        my ($out, $err);
-        IPC::Run::run(\@cmdline, \$data, \$out, \$err);
-        return ($out, $err);
-    } else {
-        my $out;
-        IPC::Run::run(\@cmdline, \$data, \$out, \$out);
-        return $out;
+    my ($out, $err);
+    IPC::Run::run(\@cmdline, \$data, \$out, wantarray ? \$err : \$out);
+
+    # Under FreeBSD-amd64 6.2's OpenSSL 0.9.7e-p1 25 Oct 2004, the
+    # return code of "openssl crl" is unreliable (see eg
+    # http://www.nntp.perl.org/group/perl.cpan.testers/1042233):
+    if ($cmdline[1] eq "crl") {
+        $? = 0 if $? == 1 << 8;
     }
+    return wantarray ? ($out, $err) : $out;
 }
 
 =head2 dumpasn1_available ()>
@@ -247,14 +248,46 @@ BEGIN { foreach my $functionname (qw(run_perl run_perl_script)) {
   *{"${functionname}_ok"} = $ok_wrapper;
 }}
 
-sub _perl_cmdline {
-  my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
-  my @perlcmdline = ($perl, (map { -I => $_ }
-                             (grep {! m|/usr|} @INC)),  # Shame, shame.
-                    );
+=head2 _perl_cmdline ()
 
-  diag(join(" ", @perlcmdline)) if $ENV{DEBUG};
-  return @perlcmdline;
+Computes (with cache) and returns the command line to invoke sub-Perls
+as on behalf of L</run_perl> and L</run_perl_script> while (more or
+less) preserving @INC.
+
+Returns the name of the Perl binary and a list of C<-I> command line
+switches that should be passed as part of an invocation of
+<perlfunc/system> or similar.  The C<-I> paths returned are exactly
+the elements in the current @INC that are B<not> part of the Perl
+interpreter's compiled-in @INC.
+
+=cut
+
+{
+    my @perlcmdline;
+    sub _perl_cmdline {
+        return @perlcmdline if @perlcmdline;
+        my ($perl) = ($^X =~ m/^(.*)$/); # Untainted
+
+        # There might be a more elegant way of fetching the pristine
+        # @INC set...
+        my ($indent, $orig_inc);
+        {
+            local $ENV{PERL5LIB};
+            ( ($indent, $orig_inc) = `$perl -V` =~ m/^( *)\@INC:\n(.*)\Z/sm )
+              or die <<"FAIL";
+Couldn't find original \@INC in the output of $perl -V.
+FAIL
+        }
+        my %orig_inc_set;
+        foreach (split m{$/}, $orig_inc) {
+            last unless m/^$indent +(.*?)$/;
+            $orig_inc_set{$1}++;
+        }
+
+        @perlcmdline = ($perl, (map { -I => $_ } (grep {! $orig_inc_set{$_} } @INC)));
+        diag(join(" ", @perlcmdline)) if $ENV{DEBUG};
+        return @perlcmdline;
+    }
 }
 
 =head2 errstack_empty_ok ()

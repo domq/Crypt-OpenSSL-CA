@@ -1,5 +1,10 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.17    14 Feb 2008
+
+        YACTBOR (see 0.16 for that acronym's expansion).  Fixes
+        spurious test failures with FreeBSD 6.2's backward OpenSSL.
+
 0.16    14 Feb 2008
 
         Yet another cpan-testers-bugfix-only release.  Hopefully will
