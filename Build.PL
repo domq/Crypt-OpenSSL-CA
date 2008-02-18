@@ -94,7 +94,7 @@ to use no particular CFLAGS.
 =cut
 
 sub openssl_cflags : Config_Option(type="string") {
-    (default => (`pkg-config --cflags openssl 2>/dev/null`));
+    (default => scalar(`pkg-config --cflags openssl 2>/dev/null`));
 }
 
 =head2 --openssl-ldflags=I<string>
@@ -106,7 +106,7 @@ use only C<-lcrypto -lssl>.
 =cut
 
 sub openssl_ldflags : Config_Option(type="string") {
-    (default => (`pkg-config --libs openssl 2>/dev/null`));
+    (default => scalar(`pkg-config --libs openssl 2>/dev/null`));
 }
 
 =head2 --full_debugging=1
@@ -477,4 +477,4 @@ CPAN_REPORTER_FODDER
 
 =cut
 
-"Chérie, tu vois bien que j'avais une bonne raison d'être en retard ce soir !";
+1;
