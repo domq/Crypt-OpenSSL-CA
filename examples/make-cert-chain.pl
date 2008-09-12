@@ -107,13 +107,14 @@ Sign it, and the certificate is ready!
 
 =head1 USER CERTIFICATE SIGNING REQUEST
 
-We are going to play by the rules, and not let the CA know the user's
-private key (it will just be saved to disk under the name
-privkey.pem).  Instead, we load the public key from a standard PKCS#10
-Certificate Signing Request (L<Crypt::OpenSSL::CA::AlphabetSoup/CSR>;
+We are going to play by the rules, and generate the user's certificate from
+public data only; here, using a PKCS#10 Certificate Signing Request
+(L<Crypt::OpenSSL::CA::AlphabetSoup/CSR>;
 L<Crypt::OpenSSL::CA::AlphabetSoup/SPKAC> is also supported).  Again
-L<Crypt::OpenSSL::CA> cannot fabricate PKCS#10's directly, but they
-are easy enough to create with the openssl command line.
+L<Crypt::OpenSSL::CA> cannot fabricate PKCS#10's directly, but you could create
+with something like
+
+  openssl req -nodes -batch -newkey rsa:1024 -keyout userkey.pem -out user.p10
 
 Standards-savvy readers know that PKCS#10 requests can contain other
 fields than the public key.  However, L<Crypt::OpenSSL::CA> ignores
@@ -122,10 +123,22 @@ them entirely.
 =cut
 
 {
-  my $user_csr_as_text =
-    `openssl req -nodes -batch -newkey rsa:1024 -keyout privkey.pem`;
+  my $user_csr = <<"PKCS10";
+-----BEGIN CERTIFICATE REQUEST-----
+MIIBhDCB7gIBADBFMQswCQYDVQQGEwJBVTETMBEGA1UECBMKU29tZS1TdGF0ZTEh
+MB8GA1UEChMYSW50ZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIGfMA0GCSqGSIb3DQEB
+AQUAA4GNADCBiQKBgQCwoel30tZE9ItO0wfQWx3jGFpMLo41iFhFrqlweTJ7iacM
+bq58tmpDjEONxhqLkNzm05nb2pylskWzKwLQ9NXvchkzK31HKyp89thiVL7ILClV
+YRYMz4QLeB75W+xl6q2pcClQ3NrN7CrR9czvmVFOXNWKWxyQXYi2Ad0qVvNF+wID
+AQABoAAwDQYJKoZIhvcNAQEFBQADgYEAFL1txli+LGSS4V1sVSRdMh054QVk9TKY
+50HTKYR44aCax3fDcnp4H7jR5QEHX0TeHCC5cr8cDDWLEYmCb0UBXr70czrap3n2
+Du3EgKJUHSURsNbkSHSBKupLrw9Ygmipl4vvHRAX59Bqbz4LGEhALnx0eiwK1TtQ
+mk7h7g7cYc8=
+-----END CERTIFICATE REQUEST-----
+PKCS10
+
   my $user_pubkey = Crypt::OpenSSL::CA::PublicKey->
-    validate_PKCS10($user_csr_as_text);
+    validate_PKCS10($user_csr);
 
 =head1 USER CERTIFICATE CREATION
 
