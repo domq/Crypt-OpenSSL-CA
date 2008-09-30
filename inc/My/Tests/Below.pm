@@ -247,7 +247,11 @@ is actually needed.
     $ENV{PATH} =~ m|^(.*)$|; # Untaints
     local %ENV = (
             "PATH"  => $1,
-            "DEBUG" => $ENV{"DEBUG"} ? 1 : 0,
+            ( $ENV{"DEBUG"} ? ( DEBUG => 1 ) : () ),
+            # Keep the following variables as some tools (eg ccache) freak
+            # out when they are missing altogether:
+            ( map { defined($ENV{$_}) ? ( $_ => $ENV{$_} ) : () }
+              qw(HOME USER LOGNAME) ),
            );
 
     eval $self->{testsuite};

@@ -59,8 +59,13 @@ if (! $builder->prereq_failures()) {
     warn <<SAME_PLAYER_SHOOTS_AGAIN;
 
 I need some of the above Perl dependencies (most notably, Inline::C)
-so as to check OpenSSL version.  Bailing out, please re-run ./Build.PL
-after all the Perl dependencies are satisfied.
+so as to check that the OpenSSL development kit works.  Therefore,
+
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !!  Please re-run ./Build.PL  !!
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+once all the Perl dependencies have been satisfied.
 
 SAME_PLAYER_SHOOTS_AGAIN
     # Unfortunately CPAN.pm cannot read instructions in natural
@@ -140,28 +145,9 @@ sub ACTION_test {
 =head2 resume ()
 
 Overloaded so as to set a flag indicating that we are running from
-C<./Build> and not C<Build.PL>.  This flag in turns tells
-L</fail_and_suggest_switches> to fake an "OS unsupported" situation so
-as to fool L<CPAN::Reporter> into B<not> sending bug reports to the
-author.
-
-Design note/complaint: saying that this is inelegant is one bit of an
-understatement, but it is the best I could come up with in the current
-state of CPAN.pm affairs.  In an ideal world, we would C<<
-->check_openssl_version_number() >> at C<./Build.PL> time only, and
-walk the cpan-testers walk in case we are unsatisfied (namely,
-C<exit(0)> without creating C<./Build>, as per
-L<http://cpantest.grango.org/wiki/CPANAuthorNotes>).  Unfortunately we
-I<absolutely> need a Perl module to check that OpenSSL version!
-(Currently we use L<Inline::C>, but that is immaterial: making that
-B<Alien::OpenSSL> or whatever wouldn't suppress the dependency, only
-move it elsewhere.)  The only alternative would be to distribute our
-C-compiling infrastructure along with L<Crypt::OpenSSL::CA> in the
-C<inc/> sub-directory, but these things tend to have a huge dependency
-trail (well, except for L<Devel::CheckLib>, which unfortunately is too
-simple to do version checking).
-
-Executive summary: I thought of the alternatives, and they don't work.
+C<./Build> and not C<Build.PL>, for the benefit of
+L</fail_because_of_openssl_libs> which can thereafter act coy on
+L<CPAN::Reporter>.
 
 =cut
 
@@ -305,10 +291,13 @@ sub run_subscript {
 
 =head2 check_openssl_version_number ()
 
-Checks that L</openssl_version_number> returns an acceptable version.
-If successful, encaches that information so that subsequent calls to
-I<check_openssl_version_number> return immediately.  If not,
-terminates with L</fail_and_suggest_switches>.
+Checks that the OpenSSL development kit is working (ie, include files
+available + libraries that one can link a .so with) and additionally
+that the version thereof is 0.9.7 or later.  If successful, encaches
+that information (persistently) so that subsequent calls to
+I<check_openssl_version_number> return immediately (even from another
+invocation of C<Build.PL> or C<Build>).  If not, terminates with
+L</fail_because_of_openssl_libs>.
 
 =cut
 
@@ -351,14 +340,16 @@ SOME_C_BONDAGE
     } or do {
         # Bummer, C compilation went bang.  Retry it with debugging on
         # so that the user gets a clue:
+        my $error = $@;
         $target_package .= "Problem";
         local $ENV{PERL_INLINE_BUILD_NOISY} = 1;
         eval {
             Crypt::OpenSSL::CA::Inline::C->
               compile_into($target_package, $test_c_program);
         };
-        $self->fail_and_suggest_switches(<<"MESSAGE");
-$@
+        $error ||= $@;
+        $self->fail_because_of_openssl_libs(<<"MESSAGE");
+$error
 
 Compiling and linking a test OpenSSL program failed; please examine
 the errors above.  You may have to install OpenSSL's development kit
@@ -371,20 +362,20 @@ MESSAGE
             (qw(from_include_files from_linked_library));
 
     unless ($incversion eq $libversion) {
-        $self->fail_and_suggest_switches(<<"VERSION_MISMATCH");
+        $self->fail_because_of_openssl_libs(<<"VERSION_MISMATCH");
 
 *** VERSION MISMATCH in OpenSSL test program! ***
 
 The version number extracted from OpenSSL's header files ($incversion)
 differs from the one returned by a call to OpenSSL's SSLeay() ($libversion).
 
-This means that several versions of the OpenSSL library are present
-(in whole or in part) on your system.
+This means that several versions of the OpenSSL development kit are
+present (in whole or in part) on your system.
 VERSION_MISMATCH
     }
 
     if (hex($libversion) < 0x00907000) {
-        $self->fail_and_suggest_switches(<<"MESSAGE");
+        $self->fail_because_of_openssl_libs(<<"MESSAGE");
 OpenSSL version 0.9.7 expected; I found only version $libversion.
 MESSAGE
     }
@@ -411,35 +402,70 @@ sub require {
     eval "require $modulename; 1" or die $@;
 }
 
-=head2 fail ($message)
+=head2 fail_because_of_openssl_libs ($message)
 
-Terminates Build.PL by displaying message, then exiting with error
-code 0, so as not to upset cpan-testers (however, the Build file still
-won't get created so users are effectively prevented from shooting
-themselves in the foot).
+Like L</fail>, but wriggles me out of getting CPANTS blame mail.
+
+Called by L</check_openssl_version_number> upon any mishap.  Explain
+to the user what to do about it, namely set --openssl-cflags and/or
+--openssl-ldflags on the Build.PL command line.  If run from the
+C<./Build> script instead (see L</resume>), acts coy and say "OS not
+supported", thereby tricking L<CPAN::Reporter> into B<not> reporting
+this failure.
+
+Okay, I'm not really proud about this quirk but it's the best I could
+come up under the current CPAN.pm design; here's why.  When installing
+using CPAN.pm's automatic dependency-chasing feature (eg C<perl -MCPAN
+-e 'install "Crypt::OpenSSL::CA"'> including, but not limited to, the
+case of some CPANTS instance testing my module automatically), the
+dance happens thusly:
+
+=over
+
+=item 1.
+
+CPAN.pm runs my module's C<Build.PL> and collects the standard output
+and error.  If a C<Build> file is not created when C<Build.PL>
+terminates, the game is over no matter what (and at this stage we can
+tell CPAN::Reporter to not send a report simply by exiting with code
+0, see L<http://cpantest.grango.org/wiki/CPANAuthorNotes>).  Otherwise
+CPAN.pm parses the standard output / error to find out the missing
+modules to install (!!).
+
+=item 2.
+
+CPAN.pm does whatever it takes to satisfy the dependencies, then turns
+around and runs the C<Build> file created at step 1.  Now we are
+I<expected to succeed> in building the module and running the tests,
+and the only way to bail out without CPAN::Reporter yelling at us is
+to say "OS not supported" (op cit,
+L<http://cpantest.grango.org/wiki/CPANAuthorNotes>).
+
+=back
+
+The trouble is best summarized by saying that the upcall API from
+C<Build.PL> to CPAN.pm is too narrow.  I<Crypt::OpenSSL::CA> obviously
+wants a working set of header files and development libraries for
+OpenSSL; unfortunately we are unable to check for these until
+L<Inline::C> is available, which typically occurs between steps 1. and
+2. above, outside of our control.  (And no, kludges such as
+backticking /usr/bin/openssl don't cut it, we really want to check for
+a working development kit because that's what we'll need at build
+time.)  In an ideal world we would tell CPAN.pm "please install
+Inline::C right now" and then L</check_openssl_version_number>
+immediately, all from within C<Build.PL>.  But we can't, and therefore
+the OpenSSL libs availability and version check typically has to wait
+until the C<Build> stage under hands-free installs; and in case the
+OpenSSL installation is no good there's no getting out from that
+pickle without upsetting CPANTS, save from lying with "OS not
+supported".  The only alternative would be to not have a chained
+dependency problem, eg distribute L<Inline::C> along with
+L<Crypt::OpenSSL::CA> in the C<inc/> sub-directory, but that would be
+both bloaty and fragile.
 
 =cut
 
-sub fail {
-    my ($self, $message) = @_;
-    chomp($message); $message .= "\n";
-    warn($message);
-    exit 0;
-}
-
-=head2 fail_and_suggest_switches ($message)
-
-Like L</fail>, but expands $message by further hinting the user to
-retry with appropriate command line switches --openssl-cflags and
---openssl-ldflags.  If run from the C<./Build> script (as opposed to
-C<Build.PL>), also tricks L<CPAN::Reporter> into B<not> reporting this
-failure; see the motivation in L</resume>.  Because of the
-aforementioned quirk, should only be called from
-L</check_openssl_version_number>.
-
-=cut
-
-sub fail_and_suggest_switches {
+sub fail_because_of_openssl_libs {
     my ($self, $message) = @_;
 
     my $exitcode = 0;

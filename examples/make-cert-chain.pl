@@ -112,7 +112,7 @@ public data only; here, using a PKCS#10 Certificate Signing Request
 (L<Crypt::OpenSSL::CA::AlphabetSoup/CSR>;
 L<Crypt::OpenSSL::CA::AlphabetSoup/SPKAC> is also supported).  Again
 L<Crypt::OpenSSL::CA> cannot fabricate PKCS#10's directly, but you could create
-with something like
+one with something like
 
   openssl req -nodes -batch -newkey rsa:1024 -keyout userkey.pem -out user.p10
 
@@ -226,12 +226,8 @@ authority key identifiers.
   $user_cert->set_extension
     (subjectAltName => 'email:johndoe@example.com,email:johndoe@example.net');
 
-  my $fancy_digest_alg = "sha256";
-  # Ah, but some old builds of OpenSSL don't have SHA-256:
-  if (! grep { $fancy_digest_alg eq $_ }
-      Crypt::OpenSSL::CA::X509->supported_digests()) {
-      $fancy_digest_alg = "ripemd160";
-  }
+  my $fancy_digest_alg = "ripemd160";  # I'd use "sha256" myself, but
+  # some old builds of OpenSSL don't have it.
   warn "And here is a certificate using $fancy_digest_alg as the digest!\n";
 
   our $user_cert_as_text = $user_cert->sign($ca_privkey, $fancy_digest_alg);

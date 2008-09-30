@@ -428,11 +428,15 @@ sub maintainer_mode_enabled {
     foreach my $vc_dir (qw(CVS .svn .hg .git)) {
         return 1 if -d catdir($self->base_dir, $vc_dir);
     }
-   
-    my $full_cmd = sprintf("yes n | svk info '%s' 2>%s",
+
+    my $svk_cmd = sprintf("yes n | svk info '%s' 2>%s",
                            catdir($self->base_dir, "Build.PL"),
                            File::Spec->devnull);
-    `$full_cmd`; return 1 if ! $?;
+    `$svk_cmd`; return 1 if ! $?;
+    # `svk info` puts the terminal into non-echo mode if run before
+    # initializing a main depot.  Shame, shame...
+    eval { require Term::ReadKey; 1 } and
+      Term::ReadKey::ReadMode("normal");
 
     return 0;
 }

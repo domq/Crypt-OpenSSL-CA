@@ -1,6 +1,10 @@
 Revision history for Crypt-OpenSSL-CA
 
-0.18    14 Feb 2008
+0.19    14 Feb 2008
+      - YACTBOR for FreeBSD with ccache and another OpenSSL setup
+        lacking basic dignity
+
+0.18    12 Sep 2008
       - YACTBOR; don't try to use `openssl req` to create a PKCS#10, as this is
         known to fail on OpenSSL-installation-challenged cpan-testers systems.
 

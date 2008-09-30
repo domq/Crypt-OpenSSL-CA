@@ -1,6 +1,6 @@
 ---
 name: Crypt-OpenSSL-CA
-version: 0.18
+version: 0.19
 author:
   - 'Dominique Quatravaux <domq@cpan.org>'
 abstract: The crypto parts of an X509v3 Certification Authority
@@ -37,7 +37,7 @@ build_requires:
 provides:
   Crypt::OpenSSL::CA:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.18
+    version: 0.19
   Crypt::OpenSSL::CA::CONF:
     file: lib/Crypt/OpenSSL/CA.pm
   Crypt::OpenSSL::CA::ENGINE:
@@ -56,7 +56,7 @@ provides:
     file: lib/Crypt/OpenSSL/CA.pm
   Crypt::OpenSSL::CA::X509_NAME:
     file: lib/Crypt/OpenSSL/CA.pm
-generated_by: Module::Build version 0.2808
+generated_by: Module::Build version 0.2806
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2
