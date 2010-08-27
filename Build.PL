@@ -404,7 +404,7 @@ sub require {
 
 =head2 fail_because_of_openssl_libs ($message)
 
-Like L</fail>, but wriggles me out of getting CPANTS blame mail.
+Like L</fail>, but wriggles me out of getting CPAN testers blame mail.
 
 Called by L</check_openssl_version_number> upon any mishap.  Explain
 to the user what to do about it, namely set --openssl-cflags and/or
@@ -417,7 +417,7 @@ Okay, I'm not really proud about this quirk but it's the best I could
 come up under the current CPAN.pm design; here's why.  When installing
 using CPAN.pm's automatic dependency-chasing feature (eg C<perl -MCPAN
 -e 'install "Crypt::OpenSSL::CA"'> including, but not limited to, the
-case of some CPANTS instance testing my module automatically), the
+case of some CPAN tester smoke-testing my module automatically), the
 dance happens thusly:
 
 =over
@@ -457,7 +457,7 @@ immediately, all from within C<Build.PL>.  But we can't, and therefore
 the OpenSSL libs availability and version check typically has to wait
 until the C<Build> stage under hands-free installs; and in case the
 OpenSSL installation is no good there's no getting out from that
-pickle without upsetting CPANTS, save from lying with "OS not
+pickle without upsetting CPAN-testers, save from lying with "OS not
 supported".  The only alternative would be to not have a chained
 dependency problem, eg distribute L<Inline::C> along with
 L<Crypt::OpenSSL::CA> in the C<inc/> sub-directory, but that would be

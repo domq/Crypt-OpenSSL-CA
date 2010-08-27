@@ -6,7 +6,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = "0.19";
+our $VERSION = "0.20";
 
 =head1 NAME
 
@@ -873,15 +873,14 @@ Starts engine $engine (a string), optionally enabling debug if $debugp
 (an integer) is true.  Returns a structural reference to same (see
 B<engine(3)> to find out what that means).
 
-The code is lifted from OpenSSL's C<setup_engine()> in C<apps.c>,
-which despite falling short from C<engine.c> feature-wise (hence the
-name, I<setup_simple>) proves sufficient in practice to have the
-C</usr/bin/openssl> command-line tool perform all relevant RSA
-operations with a variety of L<Crypt::OpenSSL::CA::AlphabetSoup/HSM>s.
-Therefore, and despite I haven't tested that due to lack of
-appropriate hardware, I am confident that I<Crypt::OpenSSL::CA> can be
-make to work with the hardware OpenSSL engines with relatively little
-fuss.
+The code is lifted from OpenSSL's C<setup_engine()> in C<apps.c>, which despite
+falling short from C<engine.c> feature-wise (hence the name, I<setup_simple>)
+proves sufficient in practice to have the C</usr/bin/openssl> command-line tool
+perform all relevant RSA operations with a variety of
+L<Crypt::OpenSSL::CA::AlphabetSoup/HSM>s.  Therefore, in spite of not having
+tested it due to lack of appropriate hardware, I am confident that
+I<Crypt::OpenSSL::CA> can be make to work with the hardware OpenSSL engines with
+relatively little fuss.
 
 =cut
 
@@ -1083,47 +1082,32 @@ void DESTROY(SV* sv_self) {
 
 X509V3_EXT_BASE
 
-=head2 new_from_X509V3_EXT_METHOD ($X509, $nid, $value, $CONF)
+=head2 new_from_X509V3_EXT_METHOD ($nid, $value, $CONF)
 
 Creates and returns an extension using OpenSSL's I<X509V3_EXT_METHOD>
 mechanism, which is summarily described in
-L<Crypt::OpenSSL::CA::Resources/openssl.txt>.  $X509, an instance of
-L</Crypt::OpenSSL::CA::X509>, is the certificate we'll be adding the
-extension to (we need it as part of the C<X509V3_CTX>, e.g. to resolve
-constructs such as C<< ->add_extension(subjectKeyIdentifier => "hash")
->>).  $nid is the NID of the extension type to add, as returned by
-L</extension_by_name>.  $value is the string value as it would be
-found in OpenSSL's configuration file under the entry that defines
-this extension (e.g. "critical;CA:FALSE").  $CONF is an instance of
+L<Crypt::OpenSSL::CA::Resources/openssl.txt>.  $nid is the NID of the
+extension type to add, as returned by L</extension_by_name>.  $value
+is the string value as it would be found in OpenSSL's configuration
+file under the entry that defines this extension
+(e.g. "critical;CA:FALSE").  $CONF is an instance of
 L</Crypt::OpenSSL::CA::CONF> that provides additional configuration
 for complex X509v3 extensions.
-
-If we are creating an extension for a certificate (as opposed to an
-extension for a CRL), $X509 should be the instance of
-L</Crypt::OpenSSL::CA::X509>, that we'll be adding the extension to:
-we need it as part of the C<X509V3_CTX>, e.g. to resolve constructs
-such as C<< ->add_extension(subjectKeyIdentifier => "hash") >>.
 
 =cut
 
 use Crypt::OpenSSL::CA::Inline::C <<"NEW_FROM_X509V3_EXT_METHOD";
 static
-SV* new_from_X509V3_EXT_METHOD(SV* class,
-                     SV* sv_x509, int nid, char* value, SV* sv_config) {
+SV* new_from_X509V3_EXT_METHOD(SV* class, int nid, char* value, SV* sv_config) {
     X509V3_CTX ctx;
     X509_EXTENSION* self;
     CONF* config = perl_unwrap("Crypt::OpenSSL::CA::CONF",
                                 CONF *, sv_config);
-    X509* x509 = NULL;
-
-    if (SvOK(sv_x509)) {
-        x509 = perl_unwrap("Crypt::OpenSSL::CA::X509", X509 *, sv_x509);
-    }
 
     if (! nid) { croak("Unknown extension specified"); }
     if (! value) { croak("No value specified"); }
 
-    X509V3_set_ctx(&ctx, NULL, x509, NULL, NULL, 0);
+    X509V3_set_ctx(&ctx, NULL, NULL, NULL, NULL, 0);
     X509V3_set_nconf(&ctx, config);
     self = X509V3_EXT_nconf_nid(config, &ctx, nid, value);
     if (!self) { sslcroak("X509V3_EXT_conf_nid failed"); }
@@ -1333,12 +1317,12 @@ using L</parse> and various read accessors, but only insofar as it
 helps I<Crypt::OpenSSL::CA> be feature-compatible with OpenSSL's
 command-line CA.  Namely, I<Crypt::OpenSSL::CA::X509> is currently
 only able to extract the information that customarily gets copied over
-from the CA's own certificate to the certificates it issues: the
-issuer DN (with L</get_subject_DN> on the CA's certificate) and the
-public key identifier (with L</get_subject_keyid>).  Patches
-are of course welcome, but TIMTOWTDI: please consider using a
-dedicated ASN.1 parser such as L<Convert::ASN1> or L<Crypt::X509>
-instead.
+from the CA's own certificate to the certificates it issues: the DN
+(with L</get_subject_DN> on the CA's certificate), the serial number
+(with L</get_serial>) and the public key identifier (with
+L</get_subject_keyid>).  Patches are of course welcome, but TIMTOWTDI:
+please consider using a dedicated ASN.1 parser such as
+L<Convert::ASN1> or L<Crypt::X509> instead.
 
 =cut
 
@@ -1366,43 +1350,6 @@ L<Crypt::OpenSSL::CA::Resources/openssl.txt>.  This means that most
 X509v3 extensions that can be set through OpenSSL's configuration file
 can be passed to this module as Perl strings in exactly the same way;
 see L</set_extension> for details.
-
-B<Warning:> the keyword in the previous sentence is ``most'', which is
-not ``all''.  In particular, you should be aware that any extension
-method that relies on the issuer certificate being known will B<not>
-work, because unlike C<openssl ca> we don't insist on having the CA
-certificate at hand in order to sign more certificates.  This means
-that
-
-=for My::Tests::Below "nice try with set_extension, no cigar" begin
-
-   $cert->set_extension("authorityKeyIdentifier",
-                               "keyid:always,issuer:always");  # WRONG!
-
-=for My::Tests::Below "nice try with set_extension, no cigar" end
-
-will B<not> work; here is the correct construct to replace it (don't
-look for it in OpenSSL's documentation or lack thereof,
-L</Crypt::OpenSSL::CA::X509> provides it in an ad-hoc manner):
-
-=for My::Tests::Below "set_extension authorityKeyIdentifier" begin
-
-  $cert->set_extension(authorityKeyIdentifier =>
-                          { keyid  => "00:DE:AD:BE:EF",
-                            issuer => $dnobj,
-                            serial => "0x1234abcd" });
-
-=for My::Tests::Below "set_extension authorityKeyIdentifier" end
-
-where the value for C<issuer> is an instance of
-L</Crypt::OpenSSL::CA::X509_NAME>, the value for C<serial> is a scalar
-containing a lowercase, hexadecimal string that starts with "0x", and
-the value for C<keyid> is as returned e.g. by L</get_openssl_keyid>.
-
-On a related matter, identifying the authority key by issuer name and
-serial number, an option that is discussed in RFC3280 section 4.2.1.1,
-although supported, is frowned upon in
-L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>.
 
 =head2 Constructors and Methods
 
@@ -1836,21 +1783,39 @@ becomes
 However, B<implicit> extension values (ie, deducted from the CA
 certificate or the subject DN) are B<not> supported:
 
-   $cert->set_extension("authorityKeyIdentifier",
-                               "keyid:always,issuer:always");  # WRONG!
+=for My::Tests::Below "nice try with set_extension, no cigar" begin
+
+  $cert->set_extension("authorityKeyIdentifier",
+                       "keyid:always,issuer:always");  # WRONG!
+
+=for My::Tests::Below "nice try with set_extension, no cigar" end
+
   $cert->set_extension(subjectAltName  => 'email:copy');  # WRONG!
 
-You would have to retrieve the actual values by a different means and
-feed them back to C<< ->set_extension >>; see the reason in L</Support
-for OpenSSL-style extensions>.
+See the reason in L</Support for OpenSSL-style extensions>.  Do this
+instead:
 
-Actually I<set_extension()> interprets a few ($extname, $value) pairs
-that are B<not> understood by stock OpenSSL, most notably C<$extname =
-authorityKeyIdentifier>.  See the complete discussion in 
+=for My::Tests::Below "set_extension authorityKeyIdentifier" begin
 
-The arguments after the first two are interpreted as a list of
-key-value pairs.  Those that start with a hyphen are named options;
-they are interpreted like so:
+  $cert->set_extension(authorityKeyIdentifier =>
+                       { keyid  => $ca->get_subject_keyid(),
+                         issuer => $ca->get_issuer_dn(),
+                         serial => $ca->get_serial() });
+
+  $cert->set_extension(subjectAltName  => 'foo@example.com');
+
+=for My::Tests::Below "set_extension authorityKeyIdentifier" end
+
+where $ca is the CA's L</Crypt::OpenSSL::CA::X509> object, constructed
+for instance with L</parse>.
+
+(Note in passing, that using the C<issuer> and C<serial> elements for
+an authorityKeyIdentifier, while discussed in RFC3280 section 4.2.1.1,
+is frowned upon in L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>).
+
+The arguments to I<set_extension> after the first two are interpreted
+as a list of key-value pairs.  Those that start with a hyphen are the
+named options; they are interpreted like so:
 
 =over
 
@@ -1951,9 +1916,8 @@ sub add_extension {
         $ext = Crypt::OpenSSL::CA::X509V3_EXT->
             new_authorityKeyIdentifier(critical => $critical, %$value);
     } elsif (my $nid = $self->extension_by_name($extname)) {
-        $ext = Crypt::OpenSSL::CA::X509V3_EXT->new_from_X509V3_EXT_METHOD
-            ($self, $nid, "$critical$value",
-             Crypt::OpenSSL::CA::CONF->new(\%options));
+        $ext = Crypt::OpenSSL::CA::X509V3_EXT->new_from_X509V3_EXT_METHOD(
+            $nid, "$critical$value", Crypt::OpenSSL::CA::CONF->new(\%options));
     } else {
         croak "Unknown extension name $extname";
     }
@@ -3092,15 +3056,16 @@ test "PrivateKey: parse password-protected software key" => sub {
 
 };
 
-test "PrivateKey: parse engine key" => sub {
-    local $TODO = "UNIMPLEMENTED";
+{
+  local $TODO = "UNIMPLEMENTED";
+  test "PrivateKey: parse engine key" => sub {
     fail;
-};
+  };
 
-test "PrivateKey: parse engine key with some engine parameters" => sub {
-    local $TODO = "UNIMPLEMENTED";
+  test "PrivateKey: parse engine key with some engine parameters" => sub {
     fail;
-};
+  };
+}
 
 skip_next_test if cannot_check_bytes_leaks;
 test "PrivateKey: memory leaks" => sub {
@@ -3143,7 +3108,7 @@ test "CONF defensiveness" => sub {
 skip_next_test if cannot_check_bytes_leaks;
 test "CONF memory management" => sub {
     leaks_bytes_ok {
-        for (1.100) {
+        for (1..100) {
             my $conf = Crypt::OpenSSL::CA::CONF->new
                 ({ section => { bigkey => "A" x 6000 }});
             $conf->get_string("section", "bigkey");
@@ -3368,6 +3333,36 @@ test "no leak on ->set_extension called multiple times" => sub {
 };
 
 use Crypt::OpenSSL::CA::Test qw(@test_DN_CAs);
+
+# Part of this function's code is in the POD.  Compile it once here,
+# rather than call eval() in a leaks_bytes_ok loop.
+*call_pod_snippets_with_set_extensions = do {
+  my $code_from_pod = My::Tests::Below->pod_code_snippet
+    ("set_extension subjectKeyIdentifier");
+  $code_from_pod .= My::Tests::Below->pod_code_snippet
+    ("set_extension authorityKeyIdentifier");
+  $code_from_pod .= My::Tests::Below->pod_code_snippet
+    ("set_extension certificatePolicies");
+  return (eval(sprintf(<<'GENERATED_SUB',  $code_from_pod)) or die $@);
+sub {
+    my ($cert) = @_;
+
+    my $dnobj = Crypt::OpenSSL::CA::X509_NAME->new
+         (CN => "bogus issuer");
+
+    {
+      package Bogus::CA;
+      sub get_subject_keyid { return "00:DE:AD:BE:EF" }
+      sub get_issuer_dn { return shift->{dn} }
+      sub get_serial { return "0x1234" }
+    }
+    my $ca = bless { dn => $dnobj }, "Bogus::CA";
+
+    %s
+}
+GENERATED_SUB
+};
+
 sub christmasify_cert {
     my ($cert) = @_;
     $cert->set_serial("0x1234567890abcdef1234567890ABCDEF");
@@ -3382,7 +3377,7 @@ sub christmasify_cert {
     $cert->set_notAfter("21060108000000Z");
     $cert->set_extension("basicConstraints", "CA:FALSE",
                          -critical => 1);
-    set_extensions_like_in_the_POD($cert); # Defined below
+    call_pod_snippets_with_set_extensions($cert);
     # 'mkay, but if we want the path validation to succeed we'd better
     # use a non-deadbeef authority key id, so here we go again:
     my $keyid = Crypt::OpenSSL::CA::X509
@@ -3399,23 +3394,6 @@ sub christmasify_cert {
 # christmasify_cert runs the POD snippets and that's neat, but we
 # want to call Perl's eval only once for fear of memory leakage in
 # Perl.
-{
-    my  $code = My::Tests::Below->pod_code_snippet
-        ("set_extension subjectKeyIdentifier");
-    $code .= My::Tests::Below->pod_code_snippet
-        ("set_extension authorityKeyIdentifier");
-    $code .= My::Tests::Below->pod_code_snippet
-        ("set_extension certificatePolicies");
-    eval <<"SUB_FROM_POD"; die $@ if $@;
-sub set_extensions_like_in_the_POD {
-    my (\$cert) = \@_;
-
-    my \$dnobj = Crypt::OpenSSL::CA::X509_NAME->new
-         (CN => "bogus issuer");
-    $code
-}
-SUB_FROM_POD
-}
 
 test "Authority key identifier" => sub {
     my $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
@@ -3441,7 +3419,7 @@ test "Authority key identifier" => sub {
     unlike($certdump, qr/keyid/i, "authority key id");
 
     $cert = Crypt::OpenSSL::CA::X509->new($eepubkey);
-    set_extensions_like_in_the_POD($cert);
+    call_pod_snippets_with_set_extensions($cert);
     $pem = $cert->sign($cakey, "sha1");
     $certdump = run_thru_openssl($pem, qw(x509 -noout -text));
     like($certdump, qr/bogus issuer/,

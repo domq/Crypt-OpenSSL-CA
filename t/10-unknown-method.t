@@ -15,4 +15,4 @@ use_ok "Crypt::OpenSSL::CA";
 eval {
     Crypt::OpenSSL::CA::X509->barf_me_harder;
 };
-like($@, qr/^Can't locate object method/);
+like($@, qr/^Can't locate/);

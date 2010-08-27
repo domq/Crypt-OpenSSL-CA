@@ -1,20 +1,23 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.20    27 Aug 2010
+      - Yet another cpan-testers-bugfix-only release (YACTBOR).  Work around
+        a breakage in Test::Group introduced by the new Test::Builder.
+
 0.19    14 Feb 2008
-      - YACTBOR for FreeBSD with ccache and another OpenSSL setup
-        lacking basic dignity
+      - YACTBOR for FreeBSD with ccache and another OpenSSL setup lacking basic
+        dignity
 
 0.18    12 Sep 2008
       - YACTBOR; don't try to use `openssl req` to create a PKCS#10, as this is
         known to fail on OpenSSL-installation-challenged cpan-testers systems.
 
 0.17    14 Feb 2008
-      - YACTBOR (see 0.16 for that acronym's expansion).  Fixes
-        spurious test failures with FreeBSD 6.2's backward OpenSSL.
+      - YACTBOR.  Fixes spurious test failures with FreeBSD 6.2's backward
+        OpenSSL.
 
 0.16    14 Feb 2008
-      - Yet another cpan-testers-bugfix-only release.  Hopefully will
-        now be able to detect OpenSSL version before attempting the
+      - YACTBOR.  Can now detect OpenSSL version before attempting the
         whole compile despite CPAN.pm's quirks.
 
 0.15    13 Feb 2008
