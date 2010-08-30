@@ -6,7 +6,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = "0.20";
+our $VERSION = "0.21_01";
 
 =head1 NAME
 

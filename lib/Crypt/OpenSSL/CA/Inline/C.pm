@@ -779,7 +779,7 @@ C_TEST
 
     my $object = make_bogus_object(42);
     is(ref($object), "bogoclass");
-    like($$object, qr/^[1-9][0-9]*$/, "looks like a number in the inside");
+    like($$object, qr/^-?[1-9][0-9]*$/, "looks like a number in the inside");
     is(bogus_object_value($object), 42);
     eval {
         $$object = 46;
