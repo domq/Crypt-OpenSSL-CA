@@ -8,6 +8,7 @@
 use strict;
 use warnings;
 use FindBin; use lib "$FindBin::Bin/inc";
+use Module::Build 0.29;  # For configure_requires
 use My::Module::Build;
 
 require 5.008; # Only tested as such.  Advanced features that are
@@ -22,6 +23,12 @@ my $builder = $class->new
       requires            =>
       {
        "XSLoader"        => 0,
+      },
+      configure_requires =>
+      {
+       "Module::Build"    => 0.29,
+       "Inline"           => 0.40,
+       "Inline::C"        => 0,
       },
       build_requires      =>
       {

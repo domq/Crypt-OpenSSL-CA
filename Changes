@@ -1,8 +1,13 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.21    31 Aug 2010
+      - Use configure_requires in Build.PL, thereby fixing RT #43281.
+      - Fix a test failure: on some systems, integers cast from pointers
+        can be negative.
+
 0.20    27 Aug 2010
-      - Yet another cpan-testers-bugfix-only release (YACTBOR).  Work around
-        a breakage in Test::Group introduced by the new Test::Builder.
+      - Yet another cpan-testers-bugfix-only release (YACTBOR). Work around a
+        breakage in Test::Group introduced by the new Test::Builder.
 
 0.19    14 Feb 2008
       - YACTBOR for FreeBSD with ccache and another OpenSSL setup lacking basic
