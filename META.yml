@@ -31,7 +31,7 @@ configure_requires:
   Inline: 0.4
   Inline::C: 0
   Module::Build: 0.29
-generated_by: Module::Build version 0.3603
+generated_by: Module::Build version 0.340201
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -48,7 +48,7 @@ no_index:
 provides:
   Crypt::OpenSSL::CA:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.21
+    version: 0.22
   Crypt::OpenSSL::CA::CONF:
     file: lib/Crypt/OpenSSL/CA.pm
   Crypt::OpenSSL::CA::ENGINE:
@@ -71,4 +71,4 @@ requires:
   XSLoader: 0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.21
+version: 0.22

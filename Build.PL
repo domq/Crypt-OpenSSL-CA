@@ -95,6 +95,14 @@ use IO::File;
 use FindBin qw($Bin);
 use My::Module::Build;
 
+sub read_cmd {
+  my ($cmd) = @_;
+  my $result = `$cmd 2>/dev/null`;
+  $result =~ s/\n/ /g;
+  $result =~ s/^ *(.*?) *$/$1/;
+  return length($result) ? $result : undef;
+}
+
 =head1 CUSTOM BUILD OPTIONS
 
 =head2 --openssl-cflags=I<string>
@@ -106,7 +114,7 @@ to use no particular CFLAGS.
 =cut
 
 sub openssl_cflags : Config_Option(type="string") {
-    (default => scalar(`pkg-config --cflags openssl 2>/dev/null`));
+  (default => read_cmd("pkg-config --cflags openssl"));
 }
 
 =head2 --openssl-ldflags=I<string>
@@ -118,7 +126,7 @@ use only C<-lcrypto -lssl>.
 =cut
 
 sub openssl_ldflags : Config_Option(type="string") {
-    (default => scalar(`pkg-config --libs openssl 2>/dev/null`));
+  (default => read_cmd("pkg-config --libs openssl"));
 }
 
 =head2 --full_debugging=1

@@ -6,7 +6,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = "0.21";
+our $VERSION = "0.22";
 # Maintainer note: Inline::C doesn't like pre-releases (eg 0.21_01)!
 
 =head1 NAME
@@ -1793,8 +1793,8 @@ certificate or the subject DN) are B<not> supported:
 
   $cert->set_extension(subjectAltName  => 'email:copy');  # WRONG!
 
-See the reason in L</Support for OpenSSL-style extensions>.  Do this
-instead:
+The reason is that we don't want the API to insist on the CA certificate when
+setting these extensions.  You can do this instead:
 
 =for My::Tests::Below "set_extension authorityKeyIdentifier" begin
 
@@ -2057,34 +2057,24 @@ OpenSSL version and the details of how it was compiled.
 use Crypt::OpenSSL::CA::Inline::C <<"SUPPORTED_DIGESTS";
 #include <openssl/objects.h>
 
-static void _push_name_to_Perl_stack(const OBJ_NAME *obj,
-                                     void *arg) {
-
-    /* Mmkay so as its name implies, this walker function needs access
-       to the Perl stack.  If we did it in Inline::C-Cookbook style,
-       each callback invocation would clobber the values previously
-       pushed :-(.  So we need to break Inline_Stack_* encapsulation
-       and actually pass around "register SV** sp", the stack context
-       fetched by Inline_Stack_Vars and altered by Inline_Stack_Push.
-       There goes elegance. */
-
-    SV*** sp_ref = (SV ***) arg;
-    SV** sp = *sp_ref;
-    Inline_Stack_Push(sv_2mortal(newSVpv(obj->name, 0))); /* Alters sp */
-    *sp_ref = sp;
+static void _push_name_to_Perl(const OBJ_NAME* obj, void* unused) {
+    /* Use dSP here ("declare stack pointer") instead of the more heavyweight
+     * Inline_Stack_Vars (aka dXSARGS), which would truncate the Perl stack
+     * every time.  See L<perlapi/dSP> and L<perlapi/dXSARGS>.
+     */
+    dSP;
+    Inline_Stack_Push(sv_2mortal(newSVpv(obj->name, 0)));
+    Inline_Stack_Done;  /* It's okay if we are actually not quite done yet. */
 }
 
 static
 void supported_digests(SV* unused_self) {
     Inline_Stack_Vars;
-    SV** sp_copy; /* See comment above */
-
     Inline_Stack_Reset;
-    sp_copy = sp;
-    OBJ_NAME_do_all_sorted(OBJ_NAME_TYPE_MD_METH, &_push_name_to_Perl_stack,
-                           (void *) &sp_copy);
-    sp = sp_copy;
-    Inline_Stack_Done;
+    OBJ_NAME_do_all_sorted(OBJ_NAME_TYPE_MD_METH, &_push_name_to_Perl, NULL);
+    /* No Inline_Stack_Done here: that would reinstate *our* copy of the stack
+     * pointer, like it was at function entry (ie empty stack).
+     */
 }
 
 SUPPORTED_DIGESTS
@@ -3248,6 +3238,10 @@ test "->supported_digests()" => sub {
         leaks_bytes_ok {
             for(1..5000) {
                 my @unused = Crypt::OpenSSL::CA::X509->supported_digests();
+                # Should also withstand scalar and void contexts, even if the
+                # return value makes little sense in these cases:
+                my $unused = Crypt::OpenSSL::CA::X509->supported_digests();
+                Crypt::OpenSSL::CA::X509->supported_digests();
             }
         };
     }

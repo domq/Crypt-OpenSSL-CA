@@ -950,9 +950,12 @@ skip_next_test "Devel::Mallinfo needed" if cannot_check_bytes_leaks;
 test "parse_RFC3280_time_or_croak memory leaks" => sub {
     leaks_bytes_ok {
         for(1..10000) {
-            TestCRoutines::test_parse_RFC3280_time("portnawak");
-            TestCRoutines::test_parse_RFC3280_time("20510103103442Z");
-            TestCRoutines::test_parse_RFC3280_time("19510103103442Z");
+            eval {
+                TestCRoutines::test_parse_RFC3280_time_or_croak("portnawak");
+                fail("Should have thrown");
+            };
+            TestCRoutines::test_parse_RFC3280_time_or_croak("20510103103442Z");
+            TestCRoutines::test_parse_RFC3280_time_or_croak("19510103103442Z");
         }
     };
 };
