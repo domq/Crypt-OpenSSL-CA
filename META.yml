@@ -48,7 +48,7 @@ no_index:
 provides:
   Crypt::OpenSSL::CA:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.22
+    version: 0.23
   Crypt::OpenSSL::CA::CONF:
     file: lib/Crypt/OpenSSL/CA.pm
   Crypt::OpenSSL::CA::ENGINE:
@@ -71,4 +71,4 @@ requires:
   XSLoader: 0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.22
+version: 0.23

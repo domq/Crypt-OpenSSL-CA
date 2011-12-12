@@ -709,7 +709,7 @@ to L<Inline::C/INC> by L</compile_everything>.
 =head2 BUILD_OPENSSL_LDFLAGS
 
 Contains the LDFLAGS to pass so as to link with the OpenSSL libraries;
-eg C<< -I/usr/lib/openssl/lib >> or something.  Passed on to
+eg C<< -L/usr/lib/openssl/lib >> or something.  Passed on to
 L<Inline::C/LIBS> by L</compile_everything>.
 
 =head1 SEE ALSO

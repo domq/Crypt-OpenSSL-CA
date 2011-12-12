@@ -6,7 +6,7 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = "0.22";
+our $VERSION = "0.23";
 # Maintainer note: Inline::C doesn't like pre-releases (eg 0.21_01)!
 
 =head1 NAME
@@ -3212,22 +3212,21 @@ test "signing several times over the same ::X509 instance" => sub {
     my @issuer_DN = (O => "Zoinx") x 50;
     my @subject_DN = (CN => "Olivera da Figueira") x 50;
     leaks_bytes_ok {
-        for(1..500) {
+        for(1..1000) {
             $cert->set_subject_DN
                 (Crypt::OpenSSL::CA::X509_NAME->new(@subject_DN));
             $cert->set_issuer_DN
                 (Crypt::OpenSSL::CA::X509_NAME->new(@issuer_DN));
             $cert->sign($cakey, "sha1");
         }
-        for(1..500) {
+        for(1..1000) {
             $anothercert->set_subject_DN
                 (Crypt::OpenSSL::CA::X509_NAME->new(@subject_DN));
             $anothercert->set_issuer_DN
                 (Crypt::OpenSSL::CA::X509_NAME->new(@issuer_DN));
             $anothercert->sign($cakey, "sha1");
         }
-    };
-
+    } -max => 60000;
 };
 
 test "->supported_digests()" => sub {
