@@ -610,7 +610,6 @@ static
 SV* get_openssl_keyid(SV* sv_self) {
     EVP_PKEY* self = perl_unwrap("${\__PACKAGE__}", EVP_PKEY *, sv_self);
     X509* fakecert = NULL;
-    X509V3_EXT_METHOD* method = NULL;
     X509V3_CTX ctx;
     ASN1_OCTET_STRING* hash = NULL;
     char* hash_hex = NULL;
@@ -618,7 +617,7 @@ SV* get_openssl_keyid(SV* sv_self) {
 
     /* Find OpenSSL's "object class" that deals with subject
      * key identifiers: */
-    method = X509V3_EXT_get_nid(NID_subject_key_identifier);
+    const X509V3_EXT_METHOD* method = X509V3_EXT_get_nid(NID_subject_key_identifier);
     if (! method) {
         err = "X509V3_EXT_get_nid failed"; goto end;
     }
@@ -639,7 +638,7 @@ SV* get_openssl_keyid(SV* sv_self) {
     hash = (ASN1_OCTET_STRING*) method->s2i(method, &ctx, "hash");
 
     /* Convert the result to hex */
-    hash_hex = i2s_ASN1_OCTET_STRING(method, hash);
+    hash_hex = i2s_ASN1_OCTET_STRING((X509V3_EXT_METHOD*) method, hash);
     if (! hash_hex) {
         err = "i2s_ASN1_OCTET_STRING failed"; goto end;
     }
@@ -1742,13 +1741,13 @@ use Crypt::OpenSSL::CA::Inline::C << "EXTENSION_BY_NAME";
 static
 int extension_by_name(SV* unused, char* extname) {
     int nid;
-    X509V3_EXT_METHOD* method;
 
     if (! extname) { return 0; }
     nid = OBJ_txt2nid(extname);
 
     if (! nid) { return 0; }
-    if (! (method = X509V3_EXT_get_nid(nid)) ) { return 0; }
+    const X509V3_EXT_METHOD* method = X509V3_EXT_get_nid(nid);
+    if (!method) { return 0; }
 
     /* Extensions that cannot be created are obviously not supported. */
     if (! (method->v2i || method->s2i || method->r2i) ) { return 0; }
