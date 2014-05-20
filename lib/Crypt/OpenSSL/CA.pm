@@ -2706,8 +2706,8 @@ void _do_add_entry(SV* sv_self, char* serial_hex, char* date,
 
 error:
         X509_REVOKED_free(entry);
-        if (plainerr) { croak(plainerr); }
-        if (sslerr) { sslcroak(sslerr); }
+        if (plainerr) { croak("%s", plainerr); }
+        if (sslerr) { sslcroak("%s", sslerr); }
         sslcroak("Unknown error in _do_add_entry");
 }
 _DO_ADD_ENTRY

@@ -375,7 +375,7 @@ static void sslcroak(char *fmt, ...) {
          croak(Nullch);
     } else {
          // Something went bang, revert to the croakbuf.
-         croak(croakbuf);
+         croak("%s", croakbuf);
     }
 }
 
@@ -422,8 +422,8 @@ static ASN1_TIME* parse_RFC3280_time_or_croak(char* date) {
     if ((retval = parse_RFC3280_time(date, &plainerr, &sslerr))) {
         return retval;
     }
-    if (plainerr) { croak(plainerr); }
-    if (sslerr) { sslcroak(sslerr); }
+    if (plainerr) { croak("%s", plainerr); }
+    if (sslerr) { sslcroak("%s", sslerr); }
     croak("Unknown error in parse_RFC3280_time");
     return NULL; /* Not reached */
 }
@@ -458,8 +458,8 @@ static ASN1_INTEGER* parse_serial_or_croak(char* hexserial) {
     if ((retval = parse_serial(hexserial, &plainerr, &sslerr))) {
         return retval;
     }
-    if (plainerr) { croak(plainerr); }
-    if (sslerr) { sslcroak(sslerr); }
+    if (plainerr) { croak("%s", plainerr); }
+    if (sslerr) { sslcroak("%s", sslerr); }
     croak("Unknown error in parse_serial");
     return NULL; /* Not reached */
 }
