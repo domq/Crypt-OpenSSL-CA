@@ -1014,7 +1014,7 @@ SV* new(SV* class, SV* configref) {
                 NCONF_free(self);
                 croak("OPENSSL_malloc failed");
             }
-            memset(value_struct, 0, sizeof(value_struct));
+            memset(value_struct, 0, sizeof(CONF_VALUE));
             if (! (value_struct->name = BUF_strdup(key))) {
                 NCONF_free(self);
                 croak("BUF_strdup()ing the key failed");
