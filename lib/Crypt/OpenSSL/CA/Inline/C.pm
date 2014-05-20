@@ -648,7 +648,7 @@ sub import {
     my ($package) = caller;
     no strict "refs";
     push @{$package."::ISA"}, qw(XSLoader);
-    XSLoader::load($package);
+    { no warnings "redefine"; XSLoader::load($package); }
 }
 
 =head1 NAME
