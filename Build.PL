@@ -41,6 +41,7 @@ my $builder = $class->new
         My::Module::Build->requires_for_build(),
         "Test::Builder"         => 0,
         "Test::More"            => 0,
+        "Test::Taint"           => 0,
         "Test::Group"           => 0,
         "IPC::Run"              => 0,
         "File::Find"            => 0,
@@ -197,7 +198,8 @@ sub ACTION_buildXS {
 
     do { unlink($_) or die "Cannot unlink($_): $!" } for glob("*.inl");
 
-    my @sofiles = glob(catfile(qw(blib arch auto Crypt OpenSSL CA * *.so)));
+    my @sofiles = map { glob(catfile(qw(blib arch auto Crypt OpenSSL CA *), $_)) }
+      (qw(*.so *.bundle));  # Depending on platform
     my @sources = (catfile(qw(lib Crypt OpenSSL CA.pm)),
                    catfile(qw(lib Crypt OpenSSL CA Inline C.pm)));
 
