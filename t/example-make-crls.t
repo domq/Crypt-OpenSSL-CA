@@ -10,7 +10,7 @@ works and produces an RFC3280-valid certificate revocation lists.
 
 =cut
 
-use Test::More no_plan => 1;
+use Test::More "no_plan";
 
 use Crypt::OpenSSL::CA::Test qw(run_perl_script_ok run_thru_openssl
                                 dumpasn1_available run_dumpasn1

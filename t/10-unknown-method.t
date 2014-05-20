@@ -8,7 +8,7 @@ misleading (as it used to be)
 
 =cut
 
-use Test::More no_plan => 1;
+use Test::More "no_plan";
 
 use_ok "Crypt::OpenSSL::CA";
 

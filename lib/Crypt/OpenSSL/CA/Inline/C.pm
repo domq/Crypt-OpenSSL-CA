@@ -730,7 +730,7 @@ __END__
 
 =cut
 
-use Test::More no_plan => 1;
+use Test::More "no_plan";
 use Test::Group;
 use Crypt::OpenSSL::CA::Test qw(errstack_empty_ok
                                 cannot_check_SV_leaks leaks_SVs_ok
