@@ -85,12 +85,13 @@ the following C functions:
 
   static inline char* char0_value(SV* string);
 
-Returns the string value of a Perl SV, making sure that it exists and
-is zero-terminated beforehand. If C<string> is undef, returns the
-empty string (B<not> NULL; see L</char0_value_or_null>).  See
-L<perlguts/Working with SVs>, look for the word "Nevertheless" - I'm
-pretty sure there is a macro in Perl's convenience stuff that does
-exactly that already, but I don't know it...
+Returns the string value of a Perl SV, making sure that it exists and is
+zero-terminated beforehand. If C<string> is undef, returns the empty string
+(B<not> NULL; see L</char0_value_or_null>). If C<string> is tainted, that makes
+no difference; return it, or the empty string, just the same. See
+L<perlguts/Working with SVs>, look for the word "Nevertheless" - I assume
+there is a macro in Perl's convenience stuff that does exactly that already, but
+I don't know it...
 
 =head3 char0_value_or_null
 
@@ -262,12 +263,13 @@ sub _c_boilerplate { <<'C_BOILERPLATE'; }
 #endif
 
 static inline char* char0_value_or_null(SV* perlscalar) {
-     STRLEN length; char* retval;
+     if (! SvOK(perlscalar)) { return NULL; }
 
+     STRLEN length;
      SvPV(perlscalar, length);
-     if (! SvPOK(perlscalar)) { return NULL; }
      SvGROW(perlscalar, length + 1);
-     retval = SvPV_nolen(perlscalar);
+
+     char* retval = SvPV_nolen(perlscalar);
      retval[length] = '\0';
      return retval;
 }
