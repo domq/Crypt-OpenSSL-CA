@@ -78,7 +78,8 @@ for the CRL must show up in C<openssl crl> or C<dumpasn1>.
 
   like($crldump, qr/last update:.*2007/i);
   like($crldump, qr/next update:.*2057/i);
-  like($crldump, qr/delta CRL.*critical.*\n.*$next_crlnumber_decimal/i);
+  like($crldump, qr/CRL Number:.*critical.*\n.*$next_crlnumber_decimal/i);
+  like($crldump, qr/delta CRL.*critical.*\n.*$crlnumber_decimal/i);
 
   my %crlentries = parse_crl_entries($crldump);
 
