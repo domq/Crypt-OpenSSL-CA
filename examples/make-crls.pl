@@ -126,8 +126,8 @@ Because we can.
 (Just make sure to update the CRL number as per RFC3280, section 5.2.3)
 
 =cut
-  $crlnumber =~ s/beef$/bef0/;
-  $deltacrl->set_extension("crlNumber", $crlnumber, -critical => 1);
+  my $deltacrlnumber = $crlnumber; $deltacrlnumber =~ s/beef$/bef0/;
+  $deltacrl->set_extension("crlNumber", $deltacrlnumber, -critical => 1);
   $deltacrl->set_extension("deltaCRLIndicator", $crlnumber,
                       -critical => 1 # as per RFC3280 section 5.2.4
                      );

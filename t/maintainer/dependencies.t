@@ -86,6 +86,7 @@ our @pervasives = qw(base warnings strict overload utf8 vars constant
                      POSIX Fcntl Cwd Sys::Hostname
                      IO::File IPC::Open2 IPC::Open3
                      File::Basename File::Find
+                     Math::BigInt
                      UNIVERSAL);
 
 =head2 @maintainer_dependencies

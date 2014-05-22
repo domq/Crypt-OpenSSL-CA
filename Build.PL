@@ -90,6 +90,7 @@ __END__
 
 use strict;
 use warnings;
+use Math::BigInt;
 use File::Spec::Functions qw(catdir catfile);
 use File::Spec::Unix;
 use IO::File;
@@ -391,7 +392,7 @@ present (in whole or in part) on your system.
 VERSION_MISMATCH
     }
 
-    if (hex($libversion) < 0x00907000) {
+    if (Math::BigInt->new($libversion) < 0x00907000) {
         $self->fail_because_of_openssl_libs(<<"MESSAGE");
 OpenSSL version 0.9.7 expected; I found only version $libversion.
 MESSAGE
