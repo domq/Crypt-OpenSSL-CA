@@ -1287,7 +1287,7 @@ SV* new_freshestCRL(char* class, char* value, SV* sv_config) {
 
     if (! value) { croak("No value specified"); }
 
-    if (! nid_freshest_crl) {
+    if (! nid_freshest_crl && ! (nid_freshest_crl = OBJ_txt2nid("freshestCRL"))) {
         nid_freshest_crl = OBJ_create("2.5.29.46", "freshestCRL",
                                       "Delta CRL distribution points");
     }
@@ -3268,6 +3268,22 @@ test "extension registry" => sub {
     is(Crypt::OpenSSL::CA::X509
          ->extension_by_name("crlNumber"), 0,
        "this extension is for CRLs, not certificates");
+};
+
+# RT #95437: in some older versions of OpenSSL, freshestCRL was an unknown
+# extension. In newer versions of OpenSSL, it is known but trying to OBJ_create
+# it anyway (as the code did in versions up to 0.19) resulted in a clash.
+test "Regression for RT #95437: extension redeclaration clash" => sub {
+  my $name = "fresheshCRL";
+  my $nid = Crypt::OpenSSL::CA::X509->extension_by_name($name);
+  if (! $nid) {
+    pass("Old version of OpenSSL doesn't know of freshestCRL, test skipped");
+    return;
+  }
+  my $crl = Crypt::OpenSSL::CA::X509_CRL->new;
+  $crl->set_extension($name => '@s', s => { "URI.0" => "http://example.com/"});
+  is(Crypt::OpenSSL::CA::X509->extension_by_name($name), $nid,
+     "Creating a CRL with freshestCRL extension doesn't corrupt the NID registry");
 };
 
 skip_next_test if cannot_check_bytes_leaks;
