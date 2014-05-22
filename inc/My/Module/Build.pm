@@ -30,7 +30,11 @@ highlighted below. Put this in Build.PL:
   ## With
   my $builder = My::Module::Build->new(
      ## ... Use ordinary Module::Build arguments here ...
-     build_requires =>    {
+     configure_requires =>     {
+           'Acme::Pony'    => 0,
+           My::Module::Build->requires_for_configure(),
+     },
+     build_requires =>         {
            'Acme::Pony'    => 0,
            My::Module::Build->requires_for_build(),
      },
@@ -382,22 +386,24 @@ sub new {
     $self;
 }
 
-=item I<requires_for_build()>
+=item I<requires_for_configure ()>
 
-Returns a list of packages that are required by I<My::Module::Build>
-itself, and should therefore be appended to the C<build_requires> hash
-as shown in L</SYNOPSIS>.
+=item I<requires_for_build ()>
+
+Returns a list of packages that are required by I<My::Module::Build> for running
+Build.PL and the Build file respectively, and should therefore be appended to
+the C<configure_requires> and C<build_requires> hashes as shown in L</SYNOPSIS>.
 
 =cut
 
-sub requires_for_build {
+sub requires_for_configure {
        ('IO::File'              => 0,
         'File::Path'            => 0,
         'File::Spec'            => 0,
         'File::Spec::Functions' => 0,
         'File::Spec::Unix'      => 0,
         'File::Find'            => 0,
-        'Module::Build'         => 0,
+        'Module::Build'         => 0.29,
         'Module::Build::Compat' => 0,
         'FindBin'               => 0, # As per L</SYNOPSIS>
 
@@ -408,6 +414,8 @@ sub requires_for_build {
                       # (at the bottom of this file)
        );
 }
+
+sub requires_for_build { return requires_for_configure }
 
 {
     no warnings "once";

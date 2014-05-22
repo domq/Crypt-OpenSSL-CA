@@ -24,21 +24,21 @@ my $builder = $class->new
       {
        "XSLoader"        => 0,
       },
-      configure_requires =>
-      {
-       "Module::Build"    => 0.29,
+      configure_requires  => {
+       My::Module::Build->requires_for_configure(),
+       # For check_openssl_version_number:
        "Inline"           => 0.40,
        "Inline::C"        => 0,
       },
       build_requires      =>
       {
+       My::Module::Build->requires_for_build(),
        "Convert::ASN1"    => 0.20, # 0.20 brings needed utf8 bugfixes
        "Inline"           => 0.40,
        "Inline::C"        => 0,
        # Packages below are needed for the test suite. (And yes,
        # running the test suite *is* a requirement of the build
        # process)
-        My::Module::Build->requires_for_build(),
         "Test::Builder"         => 0,
         "Test::More"            => 0,
         "Test::Taint"           => 0,
@@ -58,7 +58,7 @@ my $builder = $class->new
     add_to_cleanup      => [ 'Crypt-OpenSSL-CA-*', "_Inline" ],
     add_to_no_index     =>
       { namespace => [ "Crypt::OpenSSL::CA::Inline" ] },
-    create_makefile_pl  => 'passthrough',
+    create_makefile_pl  => 'small',
 );
 
 if (! $builder->prereq_failures()) {
@@ -424,62 +424,18 @@ sub require {
 
 Like L</fail>, but wriggles me out of getting CPAN testers blame mail.
 
-Called by L</check_openssl_version_number> upon any mishap.  Explain
-to the user what to do about it, namely set --openssl-cflags and/or
---openssl-ldflags on the Build.PL command line.  If run from the
-C<./Build> script instead (see L</resume>), acts coy and say "OS not
-supported", thereby tricking L<CPAN::Reporter> into B<not> reporting
-this failure.
+This is obsolescent code for old CPAN.pm's and CPANPLUSes that don't handle the
+configure_requires field in META.yml. For such situations, there is no clean way
+to let the installer know that we need Inline::C for the OpenSSL version control
+checks, leaving us with no other options than to bail out with "OS not
+supported" at ./Build time, a half-truth that at least stops spurious CPANTS
+reports.
 
-Okay, I'm not really proud about this quirk but it's the best I could
-come up under the current CPAN.pm design; here's why.  When installing
-using CPAN.pm's automatic dependency-chasing feature (eg C<perl -MCPAN
--e 'install "Crypt::OpenSSL::CA"'> including, but not limited to, the
-case of some CPAN tester smoke-testing my module automatically), the
-dance happens thusly:
-
-=over
-
-=item 1.
-
-CPAN.pm runs my module's C<Build.PL> and collects the standard output
-and error.  If a C<Build> file is not created when C<Build.PL>
-terminates, the game is over no matter what (and at this stage we can
-tell CPAN::Reporter to not send a report simply by exiting with code
-0, see L<http://cpantest.grango.org/wiki/CPANAuthorNotes>).  Otherwise
-CPAN.pm parses the standard output / error to find out the missing
-modules to install (!!).
-
-=item 2.
-
-CPAN.pm does whatever it takes to satisfy the dependencies, then turns
-around and runs the C<Build> file created at step 1.  Now we are
-I<expected to succeed> in building the module and running the tests,
-and the only way to bail out without CPAN::Reporter yelling at us is
-to say "OS not supported" (op cit,
-L<http://cpantest.grango.org/wiki/CPANAuthorNotes>).
-
-=back
-
-The trouble is best summarized by saying that the upcall API from
-C<Build.PL> to CPAN.pm is too narrow.  I<Crypt::OpenSSL::CA> obviously
-wants a working set of header files and development libraries for
-OpenSSL; unfortunately we are unable to check for these until
-L<Inline::C> is available, which typically occurs between steps 1. and
-2. above, outside of our control.  (And no, kludges such as
-backticking /usr/bin/openssl don't cut it, we really want to check for
-a working development kit because that's what we'll need at build
-time.)  In an ideal world we would tell CPAN.pm "please install
-Inline::C right now" and then L</check_openssl_version_number>
-immediately, all from within C<Build.PL>.  But we can't, and therefore
-the OpenSSL libs availability and version check typically has to wait
-until the C<Build> stage under hands-free installs; and in case the
-OpenSSL installation is no good there's no getting out from that
-pickle without upsetting CPAN-testers, save from lying with "OS not
-supported".  The only alternative would be to not have a chained
-dependency problem, eg distribute L<Inline::C> along with
-L<Crypt::OpenSSL::CA> in the C<inc/> sub-directory, but that would be
-both bloaty and fragile.
+Called by L</check_openssl_version_number> upon any mishap. If running from
+C<Build.PL>, recommend using --openssl-cflags and/or --openssl-ldflags. If run
+from the C<./Build> script instead (see L</resume>), coyly bail out with "OS not
+supported", thereby tricking L<CPAN::Reporter> into B<not> reporting this
+failure.
 
 =cut
 
