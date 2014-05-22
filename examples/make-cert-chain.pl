@@ -123,7 +123,7 @@ them entirely.
 =cut
 
 {
-  my $user_csr_as_text = <<"PKCS10";
+  my $user_csr = <<"PKCS10";
 -----BEGIN CERTIFICATE REQUEST-----
 MIIBhDCB7gIBADBFMQswCQYDVQQGEwJBVTETMBEGA1UECBMKU29tZS1TdGF0ZTEh
 MB8GA1UEChMYSW50ZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIGfMA0GCSqGSIb3DQEB
@@ -138,7 +138,7 @@ mk7h7g7cYc8=
 PKCS10
 
   my $user_pubkey = Crypt::OpenSSL::CA::PublicKey->
-    validate_PKCS10($user_csr_as_text);
+    validate_PKCS10($user_csr);
 
 =head1 USER CERTIFICATE CREATION
 

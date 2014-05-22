@@ -20,7 +20,7 @@ USE
     exit;
 }
 
-plan no_plan => 1;
+plan "no_plan";
 
 foreach my $file (all_perl_files(qw(Build.PL Build lib t))) {
     next if $file =~ m/nodebugwords\.t/; # Heh.

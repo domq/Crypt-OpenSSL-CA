@@ -1,3 +1,24 @@
+.emacs.desktop
+.emacs.desktop.lock
+_Inline/config
+_Inline/lib/auto/Char0Test/Char0Test.bs
+_Inline/lib/auto/Char0Test/Char0Test.bundle
+_Inline/lib/auto/Char0Test/Char0Test.inl
+_Inline/lib/auto/Crypt/OpenSSL/CA/ExtractVersionNumber/ExtractVersionNumber.bs
+_Inline/lib/auto/Crypt/OpenSSL/CA/ExtractVersionNumber/ExtractVersionNumber.bundle
+_Inline/lib/auto/Crypt/OpenSSL/CA/ExtractVersionNumber/ExtractVersionNumber.inl
+_Inline/lib/auto/Crypt/OpenSSL/CA/Foo/Foo.bs
+_Inline/lib/auto/Crypt/OpenSSL/CA/Foo/Foo.bundle
+_Inline/lib/auto/Crypt/OpenSSL/CA/Foo/Foo.inl
+_Inline/lib/auto/Foo/Foo.bs
+_Inline/lib/auto/Foo/Foo.bundle
+_Inline/lib/auto/Foo/Foo.inl
+_Inline/lib/auto/main/main.bs
+_Inline/lib/auto/main/main.bundle
+_Inline/lib/auto/main/main.inl
+_Inline/lib/auto/TestCRoutines/TestCRoutines.bs
+_Inline/lib/auto/TestCRoutines/TestCRoutines.bundle
+_Inline/lib/auto/TestCRoutines/TestCRoutines.inl
 Build.PL
 Changes
 examples/make-cert-chain.pl
@@ -10,9 +31,11 @@ lib/Crypt/OpenSSL/CA/Inline/C.pm
 lib/Crypt/OpenSSL/CA/Resources.pod
 Makefile.PL
 MANIFEST			This list of files
+META.json
 META.yml
 README
 t/10-unknown-method.t
+t/20-taint.t
 t/example-make-cert-chain.t
 t/example-make-crls.t
 t/inc/File/Which.pm

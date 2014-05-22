@@ -110,7 +110,7 @@ Now we just have to sign the CRL.
 
 =head1 DELTA CRL
 
-Just because we can.
+Because we can.
 
 =cut
 
@@ -120,7 +120,14 @@ Just because we can.
   $deltacrl->set_lastUpdate("20070212150000Z");
   $deltacrl->set_nextUpdate("20570101000000Z");
   $deltacrl->set_extension("authorityKeyIdentifier", { keyid => $keyid });
-  $deltacrl->set_extension("crlNumber", $crlnumber, -critical => 1);
+
+=pod
+
+(Just make sure to update the CRL number as per RFC3280, section 5.2.3)
+
+=cut
+  my $deltacrlnumber = $crlnumber; $deltacrlnumber =~ s/beef$/bef0/;
+  $deltacrl->set_extension("crlNumber", $deltacrlnumber, -critical => 1);
   $deltacrl->set_extension("deltaCRLIndicator", $crlnumber,
                       -critical => 1 # as per RFC3280 section 5.2.4
                      );

@@ -30,7 +30,11 @@ highlighted below. Put this in Build.PL:
   ## With
   my $builder = My::Module::Build->new(
      ## ... Use ordinary Module::Build arguments here ...
-     build_requires =>    {
+     configure_requires =>     {
+           'Acme::Pony'    => 0,
+           My::Module::Build->requires_for_configure(),
+     },
+     build_requires =>         {
            'Acme::Pony'    => 0,
            My::Module::Build->requires_for_build(),
      },
@@ -382,22 +386,24 @@ sub new {
     $self;
 }
 
-=item I<requires_for_build()>
+=item I<requires_for_configure ()>
 
-Returns a list of packages that are required by I<My::Module::Build>
-itself, and should therefore be appended to the C<build_requires> hash
-as shown in L</SYNOPSIS>.
+=item I<requires_for_build ()>
+
+Returns a list of packages that are required by I<My::Module::Build> for running
+Build.PL and the Build file respectively, and should therefore be appended to
+the C<configure_requires> and C<build_requires> hashes as shown in L</SYNOPSIS>.
 
 =cut
 
-sub requires_for_build {
+sub requires_for_configure {
        ('IO::File'              => 0,
         'File::Path'            => 0,
         'File::Spec'            => 0,
         'File::Spec::Functions' => 0,
         'File::Spec::Unix'      => 0,
         'File::Find'            => 0,
-        'Module::Build'         => 0,
+        'Module::Build'         => 0.28,
         'Module::Build::Compat' => 0,
         'FindBin'               => 0, # As per L</SYNOPSIS>
 
@@ -408,6 +414,8 @@ sub requires_for_build {
                       # (at the bottom of this file)
        );
 }
+
+sub requires_for_build { return requires_for_configure }
 
 {
     no warnings "once";
@@ -1069,35 +1077,34 @@ that the C<add_to_no_index> parameter to L</new> is honored.
 sub ACTION_distmeta {
     my $self = shift;
 
-    eval { require YAML } or die ($@ . <<"MESSAGE");
+    eval "use YAML 0.30; 1;" or die ($@ . <<"MESSAGE");
 
-YAML is required for distmeta to produce accurate results. Please
-install it and re-run this command.
+YAML version 0.30 or higher is required for distmeta to produce accurate
+results. Please install it and re-run this command.
 
 MESSAGE
-
     my $retval = $self->SUPER::ACTION_distmeta;
-    my $metafile =
-        $self->can("metafile") ? # True as of Module::Build 0.2805
-            $self->metafile() : $self->{metafile};
 
-    my ($node) = YAML::Load(scalar read_file($metafile));
-    $node->{no_index} = $self->{properties}->{add_to_no_index} || {};
-    $node->{no_index}->{directory} ||= [];
-    unshift(@{$node->{no_index}->{directory}}, qw(examples inc t),
+    my $metafile = $self->can("metafile") ? # True as of Module::Build 0.2805
+      $self->metafile() : $self->{metafile};
+    my $meta_yml = YAML::LoadFile($metafile);
+
+    $meta_yml->{no_index} = $self->{properties}->{add_to_no_index} || {};
+    $meta_yml->{no_index}->{directory} ||= [];
+    unshift(@{$meta_yml->{no_index}->{directory}}, qw(examples inc t),
             (map { File::Spec::Unix->catdir("lib", split m/::/) }
-             (@{$node->{no_index}->{namespace} || []})));
+             (@{$meta_yml->{no_index}->{namespace} || []})));
 
-    foreach my $package (keys %{$node->{provides}}) {
-        delete $node->{provides}->{$package} if
+    foreach my $package (keys %{$meta_yml->{provides}}) {
+        delete $meta_yml->{provides}->{$package} if
             (grep {$package =~ m/^\Q$_\E/}
-             @{$node->{no_index}->{namespace} || []});
-        delete $node->{provides}->{$package} if
+             @{$meta_yml->{no_index}->{namespace} || []});
+        delete $meta_yml->{provides}->{$package} if
             (grep {$package eq $_}
-             @{$node->{no_index}->{package} || []});
+             @{$meta_yml->{no_index}->{package} || []});
     }
 
-    write_file($metafile, YAML::Dump($node));
+    YAML::DumpFile($metafile, $meta_yml) or die "Could not write to $metafile: $!";
     return $retval;
 }
 

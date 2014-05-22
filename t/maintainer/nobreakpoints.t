@@ -17,7 +17,7 @@ USE
     exit;
 }
 
-plan no_plan => 1;
+plan "no_plan";
 
 all_files_no_breakpoints_ok(all_perl_files(qw(Build.PL Build lib inc t)));
 

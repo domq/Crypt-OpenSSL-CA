@@ -1,0 +1,84 @@
+;; -*- mode: emacs-lisp; coding: emacs-mule; -*-
+;; --------------------------------------------------------------------------
+;; Desktop File for Emacs
+;; --------------------------------------------------------------------------
+;; Created Wed May 21 15:12:10 2014
+;; Desktop file format version 206
+;; Emacs version 24.3.1
+
+;; Global section:
+(setq desktop-missing-file-warning nil)
+(setq tags-file-name nil)
+(setq tags-table-list nil)
+(setq search-ring '("my $cert"))
+(setq regexp-search-ring nil)
+(setq register-alist nil)
+(setq file-name-history '("/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/t/lib/Crypt/OpenSSL/CA/Test.pm" "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/lib/Crypt/OpenSSL/CA.pm" "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/Build.PL" "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/t/lib/Crypt/OpenSSL/CA/Test.pm" "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/examples/make-cert-chain.pl" "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/t/example-make-cert-chain.t" "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/t/20-tainted-extension.t" "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/t/20-taint.t" "/opt/local/lib/perl5/5.16.3/Test/Harness.pm" "/opt/local/lib/perl5/5.16.3/Module/Build/Base.pm" "/opt/local/lib/perl5/5.16.3/Module/Build.pm" "/opt/local/lib/perl5/5.16.3/perl5db.pl" "/opt/local/lib/perl5/5.16.3/TAP/Parser/Scheduler/Job.pm" "/opt/local/lib/perl5/5.16.3/TAP/Harness.pm" "/opt/local/lib/perl5/5.16.3/TAP/Base.pm" "/opt/local/lib/perl5/5.16.3/Test/Harness.pm" "~/Dev/CPAN/Crypt-OpenSSL-CA/Build.PL" "~/Dev/CPAN/Crypt-OpenSSL-CA/_build/lib/MyModuleBuilder.pm" "~/Dev/CPAN/Crypt-OpenSSL-CA/inc/My/Module/Build.pm" "~/Dev/CPAN/Crypt-OpenSSL-CA/Build" "~/Dev/CPAN/Crypt-OpenSSL-CA/t/20-taint.t" "/opt/local/lib/perl5/vendor_perl/5.16.1/darwin-thread-multi-2level/Test/Taint.pm" "~/Dev/CPAN/Crypt-OpenSSL-CA/t/maintainer/dependencies.t" "~/Dev/CPAN/Crypt-OpenSSL-CA/t/maintainer/kwalitee.t" "~/Dev/CPAN/Crypt-OpenSSL-CA/t/README" "~/Dev/CPAN/Crypt-OpenSSL-CA/.git/COMMIT_EDITMSG" "~/Dev/CPAN/Crypt-OpenSSL-CA/t/maintainer/nodebugwords.t" "~/Dev/CPAN/Crypt-OpenSSL-CA/t/lib/Crypt/OpenSSL/CA/Test.pm" "~/Dev/CPAN/Crypt-OpenSSL-CA/lib/Crypt/OpenSSL/CA/Inline/C.pm" "~/Dev/CPAN/Crypt-OpenSSL-CA/lib/Crypt/OpenSSL/CA.pm"))
+
+;; Buffer section -- buffers listed in same order as in buffer list:
+(desktop-create-buffer 206
+  "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/t/lib/Crypt/OpenSSL/CA/Test.pm"
+  "Test.pm"
+  'cperl-mode
+  '(global-auto-revert-mode git-gutter+-mode magit-auto-revert-mode)
+  1
+  '(nil nil)
+  nil
+  nil
+  '((buffer-file-coding-system . utf-8-unix)))
+
+(desktop-create-buffer 206
+  "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/lib/Crypt/OpenSSL/CA.pm"
+  "CA.pm"
+  'cperl-mode
+  '(global-auto-revert-mode git-gutter+-mode magit-auto-revert-mode)
+  103249
+  '(102985 nil)
+  nil
+  nil
+  '((buffer-file-coding-system . utf-8-unix)))
+
+(desktop-create-buffer 206
+  "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/t/20-tainted-extension.t"
+  "20-tainted-extension.t"
+  'cperl-mode
+  '(global-auto-revert-mode git-gutter+-mode magit-auto-revert-mode)
+  240
+  '(464 nil)
+  nil
+  nil
+  '((buffer-file-coding-system . undecided-unix)))
+
+(desktop-create-buffer 206
+  "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/inc/My/Module/Build.pm"
+  "Build.pm"
+  'cperl-mode
+  '(global-auto-revert-mode git-gutter+-mode magit-auto-revert-mode)
+  41555
+  '(41269 nil)
+  nil
+  nil
+  '((buffer-file-coding-system . undecided-unix)))
+
+(desktop-create-buffer 206
+  "/Users/dom/Dev/CPAN/Crypt-OpenSSL-CA/Build.PL"
+  "Build.PL"
+  'cperl-mode
+  '(global-auto-revert-mode git-gutter+-mode magit-auto-revert-mode)
+  4828
+  '(nil nil)
+  nil
+  nil
+  '((buffer-file-coding-system . utf-8-unix)))
+
+(desktop-create-buffer 206
+  "/opt/local/lib/perl5/5.16.3/perl5db.pl"
+  "perl5db.pl"
+  'cperl-mode
+  '(global-auto-revert-mode magit-auto-revert-mode)
+  309928
+  '(nil nil)
+  t
+  nil
+  '((buffer-file-coding-system . undecided-unix)))
+
