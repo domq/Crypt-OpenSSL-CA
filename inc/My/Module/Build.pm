@@ -1076,18 +1076,12 @@ install it and re-run this command.
 
 MESSAGE
 
-    # Steals a reference to the YAML object that will be constructed
-    # by the parent class (duhh)
-    local our $orig_yaml_node_new = \&YAML::Node::new;
-    local our $node;
-    no warnings "redefine";
-    local *YAML::Node::new = sub {
-        $node = $orig_yaml_node_new->(@_);
-    };
-
     my $retval = $self->SUPER::ACTION_distmeta;
-    die "Failed to steal the YAML node" unless defined $node;
+    my $metafile =
+        $self->can("metafile") ? # True as of Module::Build 0.2805
+            $self->metafile() : $self->{metafile};
 
+    my ($node) = YAML::Load(scalar read_file($metafile));
     $node->{no_index} = $self->{properties}->{add_to_no_index} || {};
     $node->{no_index}->{directory} ||= [];
     unshift(@{$node->{no_index}->{directory}}, qw(examples inc t),
@@ -1103,15 +1097,8 @@ MESSAGE
              @{$node->{no_index}->{package} || []});
     }
 
-    my $metafile =
-        $self->can("metafile") ? # True as of Module::Build 0.2805
-            $self->metafile() : $self->{metafile};
-    # YAML API changed after version 0.30
-    my $yaml_sub =
-        ($YAML::VERSION le '0.30' ? \&YAML::StoreFile : \&YAML::DumpFile);
-    $yaml_sub->($metafile, $node)
-        or die "Could not write to $metafile: $!";
-;
+    write_file($metafile, YAML::Dump($node));
+    return $retval;
 }
 
 =item I<customize_env(%env)>

@@ -8,6 +8,7 @@
 use strict;
 use warnings;
 use FindBin; use lib "$FindBin::Bin/inc";
+use Module::Build 0.29;  # For configure_requires
 use My::Module::Build;
 
 require 5.008; # Only tested as such.  Advanced features that are
@@ -22,6 +23,12 @@ my $builder = $class->new
       requires            =>
       {
        "XSLoader"        => 0,
+      },
+      configure_requires =>
+      {
+       "Module::Build"    => 0.29,
+       "Inline"           => 0.40,
+       "Inline::C"        => 0,
       },
       build_requires      =>
       {
@@ -88,6 +95,14 @@ use IO::File;
 use FindBin qw($Bin);
 use My::Module::Build;
 
+sub read_cmd {
+  my ($cmd) = @_;
+  my $result = `$cmd 2>/dev/null`;
+  $result =~ s/\n/ /g;
+  $result =~ s/^ *(.*?) *$/$1/;
+  return length($result) ? $result : undef;
+}
+
 =head1 CUSTOM BUILD OPTIONS
 
 =head2 --openssl-cflags=I<string>
@@ -99,7 +114,7 @@ to use no particular CFLAGS.
 =cut
 
 sub openssl_cflags : Config_Option(type="string") {
-    (default => scalar(`pkg-config --cflags openssl 2>/dev/null`));
+  (default => read_cmd("pkg-config --cflags openssl"));
 }
 
 =head2 --openssl-ldflags=I<string>
@@ -111,7 +126,7 @@ use only C<-lcrypto -lssl>.
 =cut
 
 sub openssl_ldflags : Config_Option(type="string") {
-    (default => scalar(`pkg-config --libs openssl 2>/dev/null`));
+  (default => read_cmd("pkg-config --libs openssl"));
 }
 
 =head2 --full_debugging=1
@@ -404,7 +419,7 @@ sub require {
 
 =head2 fail_because_of_openssl_libs ($message)
 
-Like L</fail>, but wriggles me out of getting CPANTS blame mail.
+Like L</fail>, but wriggles me out of getting CPAN testers blame mail.
 
 Called by L</check_openssl_version_number> upon any mishap.  Explain
 to the user what to do about it, namely set --openssl-cflags and/or
@@ -417,7 +432,7 @@ Okay, I'm not really proud about this quirk but it's the best I could
 come up under the current CPAN.pm design; here's why.  When installing
 using CPAN.pm's automatic dependency-chasing feature (eg C<perl -MCPAN
 -e 'install "Crypt::OpenSSL::CA"'> including, but not limited to, the
-case of some CPANTS instance testing my module automatically), the
+case of some CPAN tester smoke-testing my module automatically), the
 dance happens thusly:
 
 =over
@@ -457,7 +472,7 @@ immediately, all from within C<Build.PL>.  But we can't, and therefore
 the OpenSSL libs availability and version check typically has to wait
 until the C<Build> stage under hands-free installs; and in case the
 OpenSSL installation is no good there's no getting out from that
-pickle without upsetting CPANTS, save from lying with "OS not
+pickle without upsetting CPAN-testers, save from lying with "OS not
 supported".  The only alternative would be to not have a chained
 dependency problem, eg distribute L<Inline::C> along with
 L<Crypt::OpenSSL::CA> in the C<inc/> sub-directory, but that would be

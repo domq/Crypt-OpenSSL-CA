@@ -709,7 +709,7 @@ to L<Inline::C/INC> by L</compile_everything>.
 =head2 BUILD_OPENSSL_LDFLAGS
 
 Contains the LDFLAGS to pass so as to link with the OpenSSL libraries;
-eg C<< -I/usr/lib/openssl/lib >> or something.  Passed on to
+eg C<< -L/usr/lib/openssl/lib >> or something.  Passed on to
 L<Inline::C/LIBS> by L</compile_everything>.
 
 =head1 SEE ALSO
@@ -779,7 +779,7 @@ C_TEST
 
     my $object = make_bogus_object(42);
     is(ref($object), "bogoclass");
-    like($$object, qr/^[1-9][0-9]*$/, "looks like a number in the inside");
+    like($$object, qr/^-?[1-9][0-9]*$/, "looks like a number in the inside");
     is(bogus_object_value($object), 42);
     eval {
         $$object = 46;
@@ -950,9 +950,12 @@ skip_next_test "Devel::Mallinfo needed" if cannot_check_bytes_leaks;
 test "parse_RFC3280_time_or_croak memory leaks" => sub {
     leaks_bytes_ok {
         for(1..10000) {
-            TestCRoutines::test_parse_RFC3280_time("portnawak");
-            TestCRoutines::test_parse_RFC3280_time("20510103103442Z");
-            TestCRoutines::test_parse_RFC3280_time("19510103103442Z");
+            eval {
+                TestCRoutines::test_parse_RFC3280_time_or_croak("portnawak");
+                fail("Should have thrown");
+            };
+            TestCRoutines::test_parse_RFC3280_time_or_croak("20510103103442Z");
+            TestCRoutines::test_parse_RFC3280_time_or_croak("19510103103442Z");
         }
     };
 };

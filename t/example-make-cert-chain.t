@@ -22,9 +22,9 @@ my $stdout = "";
 run_perl_script_ok(catfile("examples", "make-cert-chain.pl"),
                    \$stdout, "make-cert-chain.pl runs without errors");
 
-my @certs =   $stdout =~ m/(-+BEGIN\ CERTIFICATE-+$
-                 .*?
-                 ^-+END\ CERTIFICATE-+$)/gmsx;
+my @certs = $stdout =~ m/(-+BEGIN\ CERTIFICATE-+$
+                             .*?
+                             ^-+END\ CERTIFICATE-+$)/gmsx;
 is(scalar(@certs), 2, "make-cert-chain.pl produced 2 certificates" .
    " on standard output") or die "No point in testing anything else...";
 my ($ca_cert_in_text, $user_cert_in_text) = @certs;
