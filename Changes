@@ -1,5 +1,10 @@
 Revision history for Crypt-OpenSSL-CA
 
+0.24    22 May 2014
+      - Fix RT #83507, #95385 and #95437
+      - Fix compile-time and test-time warnings
+      - Fix spurious XS rebuilds on Mac OS X
+
 0.23    9 Dec 2011
       - Fix a leaks_bytes_ok false positive on Perl 5.12.4 from Gentoo amd64
         stable.
@@ -33,6 +38,14 @@ Revision history for Crypt-OpenSSL-CA
 0.16    14 Feb 2008
       - YACTBOR.  Can now detect OpenSSL version before attempting the
         whole compile despite CPAN.pm's quirks.
+=======
+      - YACTBOR.  Fixes
+        spurious test failures with FreeBSD 6.2's backward OpenSSL.
+
+0.16    14 Feb 2008
+      - YACTBOR. Hopefully will now be able to detect OpenSSL version before
+        attempting the whole compile despite CPAN.pm's quirks.
+>>>>>>> Prepare version 0.20 in $VERSION and Changes file
 
 0.15    13 Feb 2008
       - Added ->supported_digests(). Now the OpenSSL version is validated

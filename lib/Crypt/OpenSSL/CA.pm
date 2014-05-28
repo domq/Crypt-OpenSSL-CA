@@ -6,8 +6,9 @@ use warnings;
 
 package Crypt::OpenSSL::CA;
 
-our $VERSION = "0.23";
-# Maintainer note: Inline::C doesn't like pre-releases (eg 0.21_01)!
+our $VERSION = "0.24";
+# Maintainer note: Inline::C doesn't like pre-releases (eg 0.21_01), which are not needed
+# for PAUSE developer releases anyway (http://www.cpan.org/modules/04pause.html#developerreleases)
 
 =head1 NAME
 
