@@ -1069,35 +1069,34 @@ that the C<add_to_no_index> parameter to L</new> is honored.
 sub ACTION_distmeta {
     my $self = shift;
 
-    eval { require YAML } or die ($@ . <<"MESSAGE");
+    eval "use YAML 0.30; 1;" or die ($@ . <<"MESSAGE");
 
-YAML is required for distmeta to produce accurate results. Please
-install it and re-run this command.
+YAML version 0.30 or higher is required for distmeta to produce accurate
+results. Please install it and re-run this command.
 
 MESSAGE
-
     my $retval = $self->SUPER::ACTION_distmeta;
-    my $metafile =
-        $self->can("metafile") ? # True as of Module::Build 0.2805
-            $self->metafile() : $self->{metafile};
 
-    my ($node) = YAML::Load(scalar read_file($metafile));
-    $node->{no_index} = $self->{properties}->{add_to_no_index} || {};
-    $node->{no_index}->{directory} ||= [];
-    unshift(@{$node->{no_index}->{directory}}, qw(examples inc t),
+    my $metafile = $self->can("metafile") ? # True as of Module::Build 0.2805
+      $self->metafile() : $self->{metafile};
+    my $meta_yml = YAML::LoadFile($metafile);
+
+    $meta_yml->{no_index} = $self->{properties}->{add_to_no_index} || {};
+    $meta_yml->{no_index}->{directory} ||= [];
+    unshift(@{$meta_yml->{no_index}->{directory}}, qw(examples inc t),
             (map { File::Spec::Unix->catdir("lib", split m/::/) }
-             (@{$node->{no_index}->{namespace} || []})));
+             (@{$meta_yml->{no_index}->{namespace} || []})));
 
-    foreach my $package (keys %{$node->{provides}}) {
-        delete $node->{provides}->{$package} if
+    foreach my $package (keys %{$meta_yml->{provides}}) {
+        delete $meta_yml->{provides}->{$package} if
             (grep {$package =~ m/^\Q$_\E/}
-             @{$node->{no_index}->{namespace} || []});
-        delete $node->{provides}->{$package} if
+             @{$meta_yml->{no_index}->{namespace} || []});
+        delete $meta_yml->{provides}->{$package} if
             (grep {$package eq $_}
-             @{$node->{no_index}->{package} || []});
+             @{$meta_yml->{no_index}->{package} || []});
     }
 
-    write_file($metafile, YAML::Dump($node));
+    YAML::DumpFile($metafile, $meta_yml) or die "Could not write to $metafile: $!";
     return $retval;
 }
 
