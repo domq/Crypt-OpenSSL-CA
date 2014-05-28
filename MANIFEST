@@ -20,10 +20,13 @@ _Inline/lib/auto/TestCRoutines/TestCRoutines.bs
 _Inline/lib/auto/TestCRoutines/TestCRoutines.bundle
 _Inline/lib/auto/TestCRoutines/TestCRoutines.inl
 Build.PL
+Build.PL.orig
 Changes
+Changes.orig
 examples/make-cert-chain.pl
 examples/make-crls.pl
 inc/My/Module/Build.pm
+inc/My/Module/Build.pm.orig
 inc/My/Tests/Below.pm
 lib/Crypt/OpenSSL/CA.pm
 lib/Crypt/OpenSSL/CA/AlphabetSoup.pod

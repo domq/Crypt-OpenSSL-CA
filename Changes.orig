@@ -1,10 +1,6 @@
 Revision history for Crypt-OpenSSL-CA
 
-0.24    22 May 2014
-      - Fix RT #83507, #95385 and #95437
-      - Fix compile-time and test-time warnings
-      - Fix spurious XS rebuilds on Mac OS X
-
+<<<<<<< HEAD
 0.23    9 Dec 2011
       - Fix a leaks_bytes_ok false positive on Perl 5.12.4 from Gentoo amd64
         stable.
@@ -26,12 +22,23 @@ Revision history for Crypt-OpenSSL-CA
 0.19    14 Feb 2008
       - YACTBOR for FreeBSD with ccache and another OpenSSL setup lacking basic
         dignity
+=======
+0.20    22 May 2014
+      - Fix RT #83507, #95385 and #95437
+      - Fix compile-time and test-time warnings
+      - Fix spurious XS rebuilds on Mac OS X
+
+0.19    14 Feb 2008
+      - Yet another cpan-testers-bugfix-only release (YACTBOR) for FreeBSD with ccache and
+        another OpenSSL setup lacking basic dignity
+>>>>>>> Prepare version 0.20 in $VERSION and Changes file
 
 0.18    12 Sep 2008
       - YACTBOR; don't try to use `openssl req` to create a PKCS#10, as this is
         known to fail on OpenSSL-installation-challenged cpan-testers systems.
 
 0.17    14 Feb 2008
+<<<<<<< HEAD
       - YACTBOR.  Fixes spurious test failures with FreeBSD 6.2's backward
         OpenSSL.
 

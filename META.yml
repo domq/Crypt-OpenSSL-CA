@@ -20,7 +20,7 @@ build_requires:
   Inline: 0.4
   Inline::C: 0
   MIME::Base64: 0
-  Module::Build: 0.28
+  Module::Build: 0.29
   Module::Build::Compat: 0
   Net::SSLeay: 1.25
   POSIX: 0
@@ -40,7 +40,7 @@ configure_requires:
   IO::File: 0
   Inline: 0.4
   Inline::C: 0
-  Module::Build: 0.28
+  Module::Build: 0.29
   Module::Build::Compat: 0
 dynamic_config: 1
 generated_by: 'Module::Build version 0.3901, CPAN::Meta::Converter version 2.120630'
@@ -60,7 +60,7 @@ no_index:
 provides:
   Crypt::OpenSSL::CA:
     file: lib/Crypt/OpenSSL/CA.pm
-    version: 0.20
+    version: 0.24
   Crypt::OpenSSL::CA::CONF:
     file: lib/Crypt/OpenSSL/CA.pm
     version: 0
@@ -92,4 +92,4 @@ requires:
   XSLoader: 0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.20
+version: 0.24

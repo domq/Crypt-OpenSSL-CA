@@ -33,7 +33,7 @@
             "Inline" : "0.4",
             "Inline::C" : "0",
             "MIME::Base64" : "0",
-            "Module::Build" : "0.28",
+            "Module::Build" : "0.29",
             "Module::Build::Compat" : "0",
             "Net::SSLeay" : "1.25",
             "POSIX" : "0",
@@ -56,7 +56,7 @@
             "IO::File" : "0",
             "Inline" : "0.4",
             "Inline::C" : "0",
-            "Module::Build" : "0.28",
+            "Module::Build" : "0.29",
             "Module::Build::Compat" : "0"
          }
       },
@@ -69,7 +69,7 @@
    "provides" : {
       "Crypt::OpenSSL::CA" : {
          "file" : "lib/Crypt/OpenSSL/CA.pm",
-         "version" : "0.20"
+         "version" : "0.24"
       },
       "Crypt::OpenSSL::CA::CONF" : {
          "file" : "lib/Crypt/OpenSSL/CA.pm",
@@ -118,5 +118,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "0.20"
+   "version" : "0.24"
 }
