@@ -357,7 +357,7 @@ SOME_C_BONDAGE
         1;
     } or do {
         # Bummer, C compilation went bang.  Retry it with debugging on
-        # so that the user gets a clue:
+        # so that the errors may flow to DOMQ via the cpan-testers pipes:
         my $error = $@;
         $target_package .= "Problem";
         local $ENV{PERL_INLINE_BUILD_NOISY} = 1;
