@@ -1678,7 +1678,7 @@ sub _zuluize {
     if (length($time) eq length("YYYYMMDDHHMMSSZ")) {
         return $time;
     } elsif (length($time) eq length("YYMMDDHHMMSSZ")) {
-        # RFC2480 Â§ 4.1.2.5.1
+        # RFC2480 § 4.1.2.5.1
         return ($time =~ m/^[5-9]/ ? "19" : "20") . $time;
     } else {
         croak "Bad time format $time";

@@ -10,6 +10,8 @@ package Crypt::OpenSSL::CA::Inline::C;
 
 Crypt::OpenSSL::CA::Inline::C - A bag of XS and L<Inline::C> tricks
 
+=encoding utf8
+
 =head1 SYNOPSIS
 
 =for My::Tests::Below "synopsis" begin
