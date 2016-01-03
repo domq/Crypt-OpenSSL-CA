@@ -204,7 +204,7 @@ void DESTROY(SV* sv_self) {
 
 X509_BASE
 
-=head2 new_utf8 ($dnkey1, $dnval1, ...)
+=head2 new ($dnkey1, $dnval1, ...)
 
 Constructs and returns a new I<Crypt::OpenSSL::CA::X509_NAME> object;
 implemented in terms of B<X509_NAME_add_entry_by_txt(3)>.  The RDN
@@ -223,9 +223,7 @@ C<countryName>) limit the range of acceptable values.
 
 All DN values will be converted to UTF-8 if needed, and the returned
 DN string encodes all its RDN components as C<UTF8String>s regardless
-of their value, as mandated by RFC3280 section 4.1.2.4.  This may pose
-a risk for compatibility with buggy, uh, I mean, proprietary software;
-consider using I<new()> instead of I<new_utf8()>.
+of their value, as mandated by RFC3280 section 4.1.2.4.
 
 I<new_utf8> does not support multiple AVAs in a single RDN.  If you
 don't understand this sentence, consider yourself a lucky programmer.
@@ -233,21 +231,13 @@ don't understand this sentence, consider yourself a lucky programmer.
 See also L</get_subject_DN> and L</get_issuer_DN> for an alternative
 way of constructing instances of this class.
 
-=head2 new ($dnkey1, $dnval1, ...)
+=head2 new_utf8 ($dnkey1, $dnval1, ...)
 
-Constructs a DN in just the same way as L</new_utf8>, except that the
-resulting DN will be encoded using the heuristics recommended by the
-L<Crypt::OpenSSL::CA::Resources/X509 Style Guide>: namely, by
-selecting the ``least wizz-bang'' character set that will accomodate
-the data actually passed.  Note that this behavior runs afoul of
-RFC3280 section 4.1.2.4, which instates december 31, 2003 as a flag
-day after which all certificates should be unconditionally encoded as
-UTF-8; use L</new_utf8> if you prefer RFC compliance over making
-proprietary software work.
+Backward-compatible alias for L</new>.
 
 =cut
 
-sub new_utf8 {
+sub new {
     my ($class, @args) = @_;
     croak("odd number of arguments required") if @args % 2;
 
@@ -259,19 +249,7 @@ sub new_utf8 {
     return $self;
 }
 
-sub new {
-    my ($class, @args) = @_;
-    croak("odd number of arguments required") if @args % 2;
-
-    my $self = $class->_new;
-    while(my ($k, $v) = splice(@args, 0, 2)) {
-        $self->_add_RDN_best_encoding($k, $v);
-    }
-    return $self;
-}
-
-# In order to share code between L</new> and L</new_utf8>, I had to
-# make the class mutable internally.
+sub new_utf8 { goto &new; }
 
 use Crypt::OpenSSL::CA::Inline::C <<"MUTABLE_X509_NAME";
 
@@ -280,19 +258,6 @@ SV* _new(char* class) {
     X509_NAME *retval = X509_NAME_new();
     if (!retval) { croak("not enough memory for X509_NAME_new"); }
     return perl_wrap("${\__PACKAGE__}", retval);
-}
-
-static
-void _add_RDN_best_encoding(SV* sv_self, SV* sv_key, SV* sv_val) {
-    X509_NAME* self = perl_unwrap("${\__PACKAGE__}", X509_NAME *, sv_self);
-    char* key = char0_value(sv_key);
-    char* val = char0_value(sv_val);
-    if (! X509_NAME_add_entry_by_txt
-                  (self, key,
-                  (SvUTF8(sv_val) ? MBSTRING_UTF8 : MBSTRING_ASC),
-                  (unsigned char*) val, -1, -1, 0)) {
-         sslcroak("X509_NAME_add_entry_by_txt failed for %s=%s", key, val);
-    }
 }
 
 static
@@ -2861,7 +2826,7 @@ test "X509_NAME" => sub {
         } else {
             my $rdn_asn1 = $tree->{rdnSequence}->[1]->[0];
             my ($rdn_type) = keys %{$rdn_asn1->{value}};
-            is($rdn_type, "teletexString"); # Minimal encoding
+            is($rdn_type, "utf8String");
         }
     }
 
@@ -2873,25 +2838,8 @@ test "X509_NAME" => sub {
         if (isnt($tree, undef, "decoding succesful")) {
             my $rdn_asn1 = $tree->{rdnSequence}->[1]->[0];
             my ($rdn_type) = keys %{$rdn_asn1->{value}};
-            is($rdn_type, "bmpString");
+            is($rdn_type, "utf8String");
         }
-    }
-};
-
-test "X509_NAME->new_utf8" => sub {
-    my $name = Crypt::OpenSSL::CA::X509_NAME->new_utf8
-        ("2.5.4.11" => "Internet widgets", CN => "John Doe");
-    like($name->to_string, qr/Internet widgets.*John Doe/i);
-    unlike($name->to_string, qr/John Doe.*John Doe/i, "no double encoding");
-    my $asn1 = x509_decoder('Name');
-    my $tree = $asn1->decode($name->to_asn1);
-    if (! isnt($tree, undef, "decoding succesful")) {
-        diag $asn1->error;
-        diag run_dumpasn1($name->to_asn1);
-    } else {
-        my $rdn_asn1 = $tree->{rdnSequence}->[1]->[0];
-        my ($rdn_type) = keys %{$rdn_asn1->{value}};
-        is($rdn_type, "utf8String"); # Unconditional UTF-8 encoding
     }
 };
 
